@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ profile.title }}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+        (function () {
+            const savedTheme = localStorage.getItem("theme");
+            if (savedTheme === "dark") document.documentElement.classList.add("dark");
+        })();
+    </script>
+    <style>
+        * { box-sizing: border-box; }
+        :root {
+            --bg-page: linear-gradient(135deg, #eef2ff, #f8fafc);
+            --bg-app: rgba(255,255,255,.9);
+            --bg-sidebar: rgba(248,250,252,.95);
+            --bg-header: rgba(255,255,255,.85);
+            --bg-ai: #ffffff;
+            --bg-user: #2563eb;
+            --bg-input: #ffffff;
+            --bg-button: #111827;
+            --bg-send: #2563eb;
+            --bg-stop: #ef4444;
+            --bg-item-hover: rgba(37,99,235,.08);
+            --bg-item-active: rgba(37,99,235,.14);
+            --bg-delete-hover: rgba(239,68,68,.22);
+            --bg-mode: rgba(17,24,39,.05);
+            --bg-mode-active: rgba(37,99,235,.14);
+            --bg-upload: rgba(37,99,235,.08);
+            --bg-upload-hover: rgba(37,99,235,.14);
+            --bg-upload-active: rgba(37,99,235,.18);
+            --bg-export: rgba(16,185,129,.12);
+            --bg-export-hover: rgba(16,185,129,.22);
+            --text-main: #111827;
+            --text-sub: #6b7280;
+            --text-user: #ffffff;
+            --text-danger: #dc2626;
+            --border: #e5e7eb;
+            --input-border: #d1d5db;
+        }
+        html.dark {
+            --bg-page: linear-gradient(135deg, #0f172a, #111827);
+            --bg-app: rgba(17,24,39,.95);
+            --bg-sidebar: rgba(15,23,42,.96);
+            --bg-header: rgba(17,24,39,.95);
+            --bg-ai: #1f2937;
+            --bg-user: #2563eb;
+            --bg-input: #111827;
+            --bg-button: #374151;
+            --bg-stop: #ef4444;
+            --bg-item-hover: rgba(255,255,255,.06);
+            --bg-item-active: rgba(37,99,235,.22);
+            --bg-delete-hover: rgba(239,68,68,.28);
+            --bg-mode: rgba(255,255,255,.06);
+            --bg-mode-active: rgba(37,99,235,.22);
+            --bg-upload: rgba(37,99,235,.12);
+            --bg-upload-hover: rgba(37,99,235,.18);
+            --bg-upload-active: rgba(37,99,235,.24);
+            --bg-export: rgba(16,185,129,.16);
+            --bg-export-hover: rgba(16,185,129,.28);
+            --text-main: #f9fafb;
+            --text-sub: #9ca3af;
+            --text-danger: #f87171;
+            --border: #374151;
+            --input-border: #4b5563;
+        }
+        body { margin:0; font-family:Arial,sans-serif; background:var(--bg-page); height:100vh; display:flex; justify-content:center; align-items:center; }
+        .app-shell { width:1240px; height:92vh; background:var(--bg-app); backdrop-filter:blur(10px); border:1px solid var(--border); border-radius:24px; overflow:hidden; display:flex; }
+        .sidebar { width:290px; background:var(--bg-sidebar); border-right:1px solid var(--border); display:flex; flex-direction:column; }
+        .sidebar-top { padding:18px; border-bottom:1px solid var(--border); }
+        .brand { display:flex; align-items:center; gap:12px; margin-bottom:14px; }
+        .logo { width:42px; height:42px; border-radius:14px; background:linear-gradient(135deg,#2563eb,#7c3aed); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:18px; flex-shrink:0; }
+        .brand-title { font-size:18px; font-weight:700; color:var(--text-main); }
+        .brand-subtitle { font-size:12px; color:var(--text-sub); margin-top:3px; }
+        .new-chat-btn { width:100%; height:42px; border:none; border-radius:12px; background:var(--bg-send); color:#fff; font-size:14px; cursor:pointer; }
+        .conversation-list { flex:1; overflow-y:auto; padding:12px; }
+        .conversation-item { width:100%; display:flex; align-items:stretch; gap:8px; margin-bottom:8px; }
+        .conversation-main { flex:1; min-width:0; border:none; background:transparent; color:var(--text-main); text-align:left; padding:12px 14px; border-radius:14px; cursor:pointer; }
+        .conversation-main:hover { background:var(--bg-item-hover); }
+        .conversation-main.active { background:var(--bg-item-active); }
+        .delete-conversation-btn { width:40px; flex-shrink:0; border:none; border-radius:14px; background:transparent; color:var(--text-danger); cursor:pointer; font-size:16px; }
+        .delete-conversation-btn:hover { background:var(--bg-delete-hover); }
+        .conversation-title { font-size:14px; font-weight:600; color:var(--text-main); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .conversation-preview { font-size:12px; color:var(--text-sub); margin-top:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .main-panel { flex:1; display:flex; flex-direction:column; min-width:0; }
+        .chat-header { padding:18px 22px 14px; border-bottom:1px solid var(--border); background:var(--bg-header); display:flex; flex-direction:column; gap:14px; }
+        .header-top { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+        .header-title { font-size:18px; font-weight:700; color:var(--text-main); }
+        .header-subtitle { font-size:13px; color:var(--text-sub); margin-top:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .header-actions { display:flex; gap:10px; flex-shrink:0; }
+        .header-actions button, .send-btn, .stop-btn, .image-setting-select, .upload-btn, .export-btn { border:none; border-radius:12px; padding:0 16px; height:42px; cursor:pointer; font-size:14px; }
+        .header-actions button { background:var(--bg-button); color:#fff; }
+        .mode-bar { display:flex; gap:10px; flex-wrap:wrap; }
+        .mode-btn { border:1px solid var(--border); background:var(--bg-mode); color:var(--text-main); padding:8px 14px; border-radius:12px; cursor:pointer; font-size:13px; }
+        .mode-btn.active { background:var(--bg-mode-active); border-color:rgba(37,99,235,.35); }
+        .mode-note { font-size:12px; color:var(--text-sub); margin-top:6px; }
+        .image-settings { display:none; gap:10px; flex-wrap:wrap; margin-top:10px; }
+        .image-setting-select { background:var(--bg-input); color:var(--text-main); border:1px solid var(--input-border); padding:0 12px; }
+        .upload-panel { display:flex; gap:10px; align-items:center; margin-top:10px; flex-wrap:wrap; }
+        .upload-btn { background:var(--bg-upload); color:var(--text-main); border:1px solid var(--border); }
+        .upload-btn:hover { background:var(--bg-upload-hover); }
+                .drop-zone { flex:1; min-width:260px; border:1px dashed var(--input-border); background:var(--bg-upload); color:var(--text-sub); border-radius:14px; padding:10px 14px; font-size:13px; line-height:1.5; transition:.2s ease; cursor:pointer; }
+        .drop-zone.dragover { background:var(--bg-upload-active); border-color:rgba(37,99,235,.45); color:var(--text-main); }
+        .file-chip { display:inline-flex; align-items:center; gap:8px; background:var(--bg-upload); border:1px solid var(--border); color:var(--text-main); border-radius:999px; padding:6px 10px; font-size:12px; }
+        .file-chip button { border:none; background:transparent; color:var(--text-danger); cursor:pointer; font-size:12px; padding:0; }
+        #chat-box { flex:1; overflow-y:auto; padding:24px; display:flex; flex-direction:column; gap:16px; scroll-behavior:smooth; }
+        .hint { margin:auto; max-width:560px; text-align:center; color:var(--text-sub); font-size:15px; line-height:1.7; }
+        .msg-row { display:flex; }
+        .msg-row.user { justify-content:flex-end; }
+        .msg-row.ai { justify-content:flex-start; }
+        .msg-bubble { max-width:80%; padding:14px 16px; border-radius:18px; line-height:1.65; font-size:15px; word-break:break-word; overflow-wrap:break-word; }
+        .msg-row.ai .msg-bubble { background:var(--bg-ai); color:var(--text-main); border-top-left-radius:8px; }
+        .msg-row.user .msg-bubble { background:var(--bg-user); color:var(--text-user); border-top-right-radius:8px; }
+        .msg-bubble pre { overflow-x:auto; padding:12px; border-radius:12px; background:rgba(0,0,0,.08); }
+        .msg-bubble code { font-family:Consolas,monospace; }
+        .image-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; margin-top:12px; }
+        .generated-image { width:100%; border-radius:14px; border:1px solid var(--border); display:block; }
+        .ppt-card { margin-top:12px; border:1px solid var(--border); border-radius:16px; padding:14px; background:var(--bg-upload); }
+        .ppt-card-title { font-size:15px; font-weight:700; color:var(--text-main); }
+        .ppt-card-meta { font-size:12px; color:var(--text-sub); margin-top:6px; }
+        .ppt-download-btn { display:inline-flex; align-items:center; justify-content:center; margin-top:12px; height:40px; padding:0 16px; border:none; border-radius:12px; background:var(--bg-send); color:#fff; cursor:pointer; text-decoration:none; font-size:14px; }
+        .input-area { display:flex; gap:12px; padding:18px; border-top:1px solid var(--border); background:var(--bg-header); }
+        #message { flex:1; height:46px; border:1px solid var(--input-border); border-radius:14px; padding:0 16px; font-size:15px; outline:none; background:var(--bg-input); color:var(--text-main); }
+        .send-btn { background:var(--bg-send); color:#fff; }
+        .stop-btn { background:var(--bg-stop); color:#fff; display:none; }
+        .thinking-wrap { display:inline-flex; align-items:center; gap:10px; color:var(--text-sub); }
+        .dots { display:inline-flex; gap:5px; }
+        .dot { width:7px; height:7px; background:var(--text-sub); border-radius:50%; animation:bounce 1.2s infinite ease-in-out; }
+        .dot:nth-child(2){ animation-delay:.15s; } .dot:nth-child(3){ animation-delay:.3s; }
+        @keyframes bounce { 0%,80%,100% { transform:translateY(0); opacity:.4; } 40% { transform:translateY(-4px); opacity:1; } }
+    </style>
+</head>
+<body>
+<div class="app-shell">
+    <aside class="sidebar">
+        <div class="sidebar-top">
+            <div class="brand">
+                <div class="logo">{{ profile.logo }}</div>
+                <div><div class="brand-title">{{ profile.title }}</div><div class="brand-subtitle">History & sessions</div></div>
+            </div>
+            <button class="new-chat-btn" onclick="createNewConversation()">+ 新聊天</button>
+        </div>
+        <div class="conversation-list" id="conversation-list"></div>
+    </aside>
+
+    <section class="main-panel">
+        <div class="chat-header">
+            <div class="header-top">
+                <div><div class="header-title">{{ profile.title }}</div><div class="header-subtitle">{{ profile.subtitle }}</div></div>
+                <div class="header-actions">
+                    <button onclick="toggleTheme()" id="theme-btn">深色模式</button>
+                    <button onclick="clearCurrentConversation()">清空当前</button>
+                </div>
+            </div>
+
+            <div>
+                <div class="mode-bar" id="mode-bar"></div>
+                <div class="mode-note" id="mode-note"></div>
+
+                <div class="image-settings" id="image-settings">
+                    <select class="image-setting-select" id="aspect-ratio-select">
+                        <option value="1:1">1:1</option><option value="3:2">3:2</option><option value="4:3">4:3</option><option value="16:9">16:9</option><option value="9:16">9:16</option>
+                    </select>
+                    <select class="image-setting-select" id="image-size-select">
+                        <option value="1K">1K</option><option value="2K">2K</option><option value="4K">4K</option>
+                    </select>
+                </div>
+
+                <div class="upload-panel">
+                    <input type="file" id="file-input" hidden accept=".py,.txt,.md,.json,.js,.ts,.html,.css,.java,.cpp,.c,.cs,.go,.rs,.php,.xml,.yaml,.yml,.pdf,.docx" />
+                    <button class="upload-btn" id="upload-btn" onclick="openFilePicker()">📎 上传文件</button>
+                                        <div class="drop-zone" id="drop-zone">拖拽文件到这里，或点击上传按钮。支持 .py / .txt / .md / .json / .pdf / .docx 等文件。</div>
+                    <div id="file-chip-wrap"></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="chat-box"></div>
+
+        <div class="input-area">
+            <input type="text" id="message" placeholder="想和 Selena 说点什么？" onkeydown="handleKey(event)">
+            <button class="send-btn" id="primary-action-btn" onclick="sendMessage()">发送</button>
+            <button class="stop-btn" onclick="stopResponse()">停止</button>
+        </div>
+    </section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+let stopGenerating = false;
+let currentController = null;
+let attachedFile = null;
+
+const STORAGE_KEY = "selena_conversations";
+const ACTIVE_KEY = "selena_active_conversation_id";
+const MODE_KEY = "selena_current_mode";
+
+const SELENA_BOOT_MESSAGE = "你好，我是 Selena。现在已经准备好了。无论你想聊天、整理思路、修改代码、整合 PPT，还是生成图片，我都会陪你一起完成。";
+const SELENA_THINKING_TEXT = "{{ profile.thinking }}";
+const SELENA_ERROR_TEXT = "{{ profile.server_error }}";
+const MODES = {{ modes | tojson }};
+const IMAGE_DEFAULTS = {{ image_defaults | tojson }};
+
+let conversations = [];
+let activeConversationId = null;
+let currentMode = "chat";
+
+function generateId() { return "conv_" + Date.now() + "_" + Math.floor(Math.random() * 10000); }
+function getActiveConversation() { return conversations.find(conv => conv.id === activeConversationId); }
+function getModeConfig(mode) { return MODES[mode] || MODES["chat"] || {}; }
+
+function saveConversations() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
+    localStorage.setItem(ACTIVE_KEY, activeConversationId || "");
+    localStorage.setItem(MODE_KEY, currentMode || "chat");
+}
+function loadConversations() {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    const savedActiveId = localStorage.getItem(ACTIVE_KEY);
+    const savedMode = localStorage.getItem(MODE_KEY);
+    if (saved) { try { conversations = JSON.parse(saved); } catch { conversations = []; } }
+    currentMode = MODES[savedMode] ? savedMode : "chat";
+    if (!conversations.length) {
+        const firstConversation = { id: generateId(), title: "新聊天", messages: [{ role: "ai", content: SELENA_BOOT_MESSAGE }] };
+        conversations.push(firstConversation);
+        activeConversationId = firstConversation.id;
+        saveConversations();
+        return;
+    }
+    activeConversationId = savedActiveId && conversations.some(c => c.id === savedActiveId) ? savedActiveId : conversations[0].id;
+}
+function updateThemeButton() {
+    const btn = document.getElementById("theme-btn");
+    btn.textContent = document.documentElement.classList.contains("dark") ? "浅色模式" : "深色模式";
+}
+function toggleTheme() {
+    document.documentElement.classList.toggle("dark");
+    localStorage.setItem("theme", document.documentElement.classList.contains("dark") ? "dark" : "light");
+    updateThemeButton();
+}
+function renderModeBar() {
+    const bar = document.getElementById("mode-bar");
+    const note = document.getElementById("mode-note");
+    const imageSettings = document.getElementById("image-settings");
+    const primaryBtn = document.getElementById("primary-action-btn");
+    bar.innerHTML = "";
+    Object.entries(MODES).forEach(([key, config]) => {
+        const btn = document.createElement("button");
+        btn.className = "mode-btn" + (key === currentMode ? " active" : "");
+        btn.textContent = config.label || key;
+        btn.disabled = !!currentController;
+        btn.onclick = () => setMode(key);
+        bar.appendChild(btn);
+    });
+    const activeModeConfig = getModeConfig(currentMode);
+    note.textContent = activeModeConfig.description || "";
+    imageSettings.style.display = currentMode === "image" ? "flex" : "none";
+    primaryBtn.textContent = currentMode === "image" ? "生成图片" : "发送";
+    updateInputPlaceholder();
+}
+function setMode(mode) {
+    if (currentController || !MODES[mode]) return;
+    currentMode = mode;
+    saveConversations();
+    renderModeBar();
+}
+function updateInputPlaceholder() {
+    const input = document.getElementById("message");
+    const modeConfig = getModeConfig(currentMode);
+    if (!input.disabled) input.placeholder = modeConfig.placeholder || "想和 Selena 说点什么？";
+}
+function handleKey(event) {
+    if (event.key === "Enter") {
+        event.preventDefault();
+        if (!document.getElementById("message").disabled) sendMessage();
+    }
+}
+function scrollToBottom() {
+    const box = document.getElementById("chat-box");
+    box.scrollTop = box.scrollHeight;
+}
+function addTextMessageElement(role, text = "", isLoading = false) {
+    const box = document.getElementById("chat-box");
+    const row = document.createElement("div");
+    row.className = "msg-row " + role;
+    if (isLoading) row.id = "loading-row";
+    const bubble = document.createElement("div");
+    bubble.className = "msg-bubble";
+    if (isLoading) {
+        bubble.innerHTML = `<div class="thinking-wrap"><span>${SELENA_THINKING_TEXT}</span><span class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span></div>`;
+    } else if (role === "ai") {
+        bubble.innerHTML = marked.parse(text);
+    } else {
+        bubble.textContent = text;
+    }
+    row.appendChild(bubble);
+    box.appendChild(row);
+    scrollToBottom();
+    return bubble;
+}
+function addPptMessageElement(role, text, ppt) {
+    const box = document.getElementById("chat-box");
+    const row = document.createElement("div");
+    row.className = "msg-row " + role;
+    const bubble = document.createElement("div");
+    bubble.className = "msg-bubble";
+    const textBlock = document.createElement("div");
+    textBlock.innerHTML = marked.parse(text || "我已经为你生成了 PPT。");
+    bubble.appendChild(textBlock);
+
+    const card = document.createElement("div");
+    card.className = "ppt-card";
+    card.innerHTML = `
+        <div class="ppt-card-title">📘 ${ppt?.ppt_title || ppt?.filename || "Selena Presentation"}</div>
+        <div class="ppt-card-meta">共 ${ppt?.slide_count || "?"} 页 · 配图 ${ppt?.image_count || 0} 张 · ${ppt?.filename || "presentation.pptx"}</div>
+        <a class="ppt-download-btn" href="${ppt?.download_url || "#"}" download>下载 PPT</a>
+    `;
+    bubble.appendChild(card);
+    row.appendChild(bubble);
+    box.appendChild(row);
+    scrollToBottom();
+}
+
+function addImageMessageElement(role, text, images) {
+    const box = document.getElementById("chat-box");
+    const row = document.createElement("div");
+    row.className = "msg-row " + role;
+    const bubble = document.createElement("div");
+    bubble.className = "msg-bubble";
+    const textBlock = document.createElement("div");
+    textBlock.innerHTML = marked.parse(text || "我已经为你生成了图片。");
+    bubble.appendChild(textBlock);
+    const grid = document.createElement("div");
+    grid.className = "image-grid";
+    (images || []).forEach((src, index) => {
+        const img = document.createElement("img");
+        img.className = "generated-image";
+        img.src = src;
+        img.alt = `Generated image ${index + 1}`;
+        grid.appendChild(img);
+    });
+    bubble.appendChild(grid);
+    row.appendChild(bubble);
+    box.appendChild(row);
+    scrollToBottom();
+}
+function renderConversationList() {
+    const list = document.getElementById("conversation-list");
+    list.innerHTML = "";
+    conversations.forEach(conv => {
+        const item = document.createElement("div");
+        item.className = "conversation-item";
+        const mainBtn = document.createElement("button");
+        mainBtn.className = "conversation-main" + (conv.id === activeConversationId ? " active" : "");
+        mainBtn.onclick = () => switchConversation(conv.id);
+        mainBtn.disabled = !!currentController;
+        const title = document.createElement("div");
+        title.className = "conversation-title";
+        title.textContent = conv.title || "未命名聊天";
+        const preview = document.createElement("div");
+        preview.className = "conversation-preview";
+        const lastMessage = conv.messages[conv.messages.length - 1];
+        preview.textContent = lastMessage ? (lastMessage.content || "").replace(/\n/g, " ").slice(0, 50) : "暂无内容";
+        mainBtn.appendChild(title);
+        mainBtn.appendChild(preview);
+        const deleteBtn = document.createElement("button");
+        deleteBtn.className = "delete-conversation-btn";
+        deleteBtn.title = "删除对话";
+        deleteBtn.innerHTML = "🗑";
+        deleteBtn.disabled = !!currentController;
+        deleteBtn.onclick = (event) => { event.stopPropagation(); deleteConversation(conv.id); };
+        item.appendChild(mainBtn);
+        item.appendChild(deleteBtn);
+        list.appendChild(item);
+    });
+}
+function renderActiveConversation() {
+    const chatBox = document.getElementById("chat-box");
+    chatBox.innerHTML = "";
+    const activeConversation = getActiveConversation();
+    if (!activeConversation || !activeConversation.messages.length) {
+        chatBox.innerHTML = `<div class="hint">这里还没有消息，开始和 Selena 聊聊吧。</div>`;
+        return;
+    }
+    activeConversation.messages.forEach(msg => {
+        const normalizedRole = msg.role === "assistant" ? "ai" : msg.role;
+        if (msg.type === "image" && msg.images) addImageMessageElement(normalizedRole, msg.content, msg.images);
+        else if (msg.type === "ppt" && msg.download_url) addPptMessageElement(normalizedRole, msg.content, msg);
+        else addTextMessageElement(normalizedRole, msg.content);
+    });
+}
+function switchConversation(id) {
+    if (currentController) return;
+    activeConversationId = id;
+    saveConversations();
+    renderConversationList();
+    renderActiveConversation();
+}
+function createNewConversation() {
+    if (currentController) return;
+    const newConversation = { id: generateId(), title: "新聊天", messages: [{ role: "ai", content: SELENA_BOOT_MESSAGE }] };
+    conversations.unshift(newConversation);
+    activeConversationId = newConversation.id;
+    saveConversations();
+    renderConversationList();
+    renderActiveConversation();
+}
+async function deleteConversation(conversationId) {
+    if (currentController) return;
+    const conv = conversations.find(c => c.id === conversationId);
+    const convTitle = conv?.title || "这个对话";
+    const confirmed = window.confirm(`确定要删除“${convTitle}”吗？此操作无法撤销。`);
+    if (!confirmed) return;
+    const wasActive = conversationId === activeConversationId;
+    conversations = conversations.filter(c => c.id !== conversationId);
+    try {
+        await fetch("/clear", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversation_id: conversationId }) });
+    } catch (error) {}
+    if (!conversations.length) {
+        const fallbackConversation = { id: generateId(), title: "新聊天", messages: [{ role: "ai", content: SELENA_BOOT_MESSAGE }] };
+        conversations.push(fallbackConversation);
+        activeConversationId = fallbackConversation.id;
+    } else if (wasActive) activeConversationId = conversations[0].id;
+    saveConversations();
+    renderConversationList();
+    renderActiveConversation();
+}
+async function requestAiTitle(userMessage) {
+    try {
+        const res = await fetch("/title", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: userMessage }) });
+        const data = await res.json();
+        return (data.title || "").trim();
+    } catch (error) { return ""; }
+}
+async function maybeGenerateConversationTitle(conv, userMessage) {
+    if (!conv || (conv.title && conv.title !== "新聊天")) return;
+    const aiTitle = await requestAiTitle(userMessage);
+    conv.title = aiTitle || userMessage.slice(0, 18) || "新聊天";
+    saveConversations();
+    renderConversationList();
+}
+function setInputBusy(isBusy) {
+    const input = document.getElementById("message");
+    const primaryBtn = document.getElementById("primary-action-btn");
+    const stopBtn = document.querySelector(".stop-btn");
+    const uploadBtn = document.getElementById("upload-btn");
+    input.disabled = isBusy;
+    primaryBtn.disabled = isBusy;
+    uploadBtn.disabled = isBusy;
+    if (isBusy) {
+        input.placeholder = currentMode === "image" ? "Selena 正在绘制图像..." : "Selena 正在思考...";
+        stopBtn.style.display = currentMode === "image" ? "none" : "inline-block";
+    } else {
+        stopBtn.style.display = "none";
+        renderModeBar();
+        input.focus();
+    }
+    renderConversationList();
+}
+function stopResponse() {
+    stopGenerating = true;
+    if (currentController) {
+        currentController.abort();
+        currentController = null;
+    }
+    setInputBusy(false);
+}
+function openFilePicker() {
+    if (currentController) return;
+    document.getElementById("file-input").click();
+}
+function renderFileChip() {
+    const wrap = document.getElementById("file-chip-wrap");
+    wrap.innerHTML = "";
+    if (!attachedFile) return;
+    const chip = document.createElement("div");
+    chip.className = "file-chip";
+    chip.innerHTML = `<span>${attachedFile.filename}</span><button type="button" title="移除文件">✕</button>`;
+    chip.querySelector("button").onclick = clearAttachedFile;
+    wrap.appendChild(chip);
+}
+function clearAttachedFile() {
+    attachedFile = null;
+    document.getElementById("file-input").value = "";
+    renderFileChip();
+}
+function inferModeByFilename(filename) {
+    const lower = filename.toLowerCase();
+    if (/\.(py|js|ts|java|cpp|c|cs|go|rs|php|html|css|xml|json|ya?ml)$/.test(lower)) {
+        setMode("code");
+        return;
+    }
+    if (/\.(md|txt|pdf|docx)$/.test(lower) && currentMode === "image") setMode("chat");
+}
+async function uploadFileToServer(file) {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch("/upload-file", { method: "POST", body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "文件上传失败");
+    return data;
+}
+async function handleSelectedFile(file) {
+    if (!file) return;
+    try {
+        const result = await uploadFileToServer(file);
+        attachedFile = { upload_id: result.upload_id, filename: result.filename, truncated: !!result.truncated };
+        if (result.suggested_mode) inferModeByFilename(result.filename);
+        renderFileChip();
+        const input = document.getElementById("message");
+        if (!input.value.trim()) {
+            if (currentMode === "code") input.value = "请帮我分析这个文件，并指出可以优化或修复的地方。";
+            else if (currentMode === "ppt") input.value = "请根据这个文件内容生成一份带图片、排版完整的正式 PPT。";
+            else input.value = "请先阅读并总结这个文件。";
+        }
+        if (result.truncated) window.alert("文件内容较长，后端已自动截取前一部分用于分析。");
+    } catch (error) {
+        window.alert(error.message || "上传失败，请重试。");
+    }
+}
+function setupFileUpload() {
+    const fileInput = document.getElementById("file-input");
+    const dropZone = document.getElementById("drop-zone");
+    fileInput.addEventListener("change", async (event) => {
+        const file = event.target.files[0];
+        await handleSelectedFile(file);
+    });
+    ["dragenter", "dragover"].forEach(eventName => {
+        dropZone.addEventListener(eventName, (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            dropZone.classList.add("dragover");
+        });
+    });
+    ["dragleave", "drop"].forEach(eventName => {
+        dropZone.addEventListener(eventName, (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            dropZone.classList.remove("dragover");
+        });
+    });
+    dropZone.addEventListener("drop", async (event) => {
+        const file = event.dataTransfer.files[0];
+        await handleSelectedFile(file);
+    });
+    dropZone.addEventListener("click", openFilePicker);
+}
+async function sendMessage() {
+    if (currentMode === "image") await sendImageRequest();
+    else if (currentMode === "ppt") await sendPptRequest();
+    else await sendTextRequest();
+}
+async function sendTextRequest() {
+    const input = document.getElementById("message");
+    const typedMessage = input.value.trim();
+    if (currentController) return;
+    if (!typedMessage && !attachedFile) return;
+    const activeConversation = getActiveConversation();
+    if (!activeConversation) return;
+    const visibleUserMessage = attachedFile ? `📎 已上传文件：${attachedFile.filename}\n${typedMessage || "请帮我分析这个文件。"}`
+                                           : typedMessage;
+    activeConversation.messages.push({ role: "user", content: visibleUserMessage });
+    saveConversations();
+    renderConversationList();
+    if (!activeConversation.title || activeConversation.title === "新聊天") {
+        maybeGenerateConversationTitle(activeConversation, attachedFile ? attachedFile.filename : visibleUserMessage);
+    }
+    addTextMessageElement("user", visibleUserMessage);
+    input.value = "";
+    setInputBusy(true);
+    addTextMessageElement("ai", "", true);
+    const controller = new AbortController();
+    currentController = controller;
+    stopGenerating = false;
+    try {
+        const res = await fetch("/chat-stream", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                message: typedMessage,
+                conversation_id: activeConversationId,
+                mode: currentMode,
+                upload_id: attachedFile ? attachedFile.upload_id : ""
+            }),
+            signal: controller.signal
+        });
+        const loadingRow = document.getElementById("loading-row");
+        if (loadingRow) loadingRow.remove();
+        if (!res.ok || !res.body) {
+            addTextMessageElement("ai", SELENA_ERROR_TEXT);
+            activeConversation.messages.push({ role: "assistant", content: SELENA_ERROR_TEXT });
+            saveConversations();
+            renderConversationList();
+            return;
+        }
+        const aiBubble = addTextMessageElement("ai", "");
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let fullText = "";
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            if (stopGenerating) break;
+            fullText += decoder.decode(value, { stream: true });
+            aiBubble.innerHTML = marked.parse(fullText);
+            scrollToBottom();
+        }
+        fullText += decoder.decode();
+        aiBubble.innerHTML = marked.parse(fullText || "……");
+        activeConversation.messages.push({ role: "assistant", content: fullText || "……" });
+        saveConversations();
+        renderConversationList();
+        clearAttachedFile();
+    } catch (error) {
+        const loadingRow = document.getElementById("loading-row");
+        if (loadingRow) loadingRow.remove();
+        if (error.name === "AbortError") {
+            const bubbles = document.querySelectorAll(".msg-row.ai .msg-bubble");
+            const lastBubble = bubbles[bubbles.length - 1];
+            const partialText = lastBubble ? lastBubble.innerText.trim() : "";
+            if (partialText) {
+                activeConversation.messages.push({ role: "assistant", content: partialText });
+                saveConversations();
+                renderConversationList();
+            }
+        } else {
+            addTextMessageElement("ai", SELENA_ERROR_TEXT);
+            activeConversation.messages.push({ role: "assistant", content: SELENA_ERROR_TEXT });
+            saveConversations();
+            renderConversationList();
+        }
+    } finally {
+        currentController = null;
+        setInputBusy(false);
+    }
+}
+async function sendImageRequest() {
+    const input = document.getElementById("message");
+    const prompt = input.value.trim();
+    if (!prompt || currentController) return;
+    const activeConversation = getActiveConversation();
+    if (!activeConversation) return;
+    activeConversation.messages.push({ role: "user", content: prompt });
+    saveConversations();
+    renderConversationList();
+    if (!activeConversation.title || activeConversation.title === "新聊天") maybeGenerateConversationTitle(activeConversation, prompt);
+    addTextMessageElement("user", prompt);
+    input.value = "";
+    setInputBusy(true);
+    addTextMessageElement("ai", "", true);
+    try {
+        const res = await fetch("/generate-image", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                prompt,
+                conversation_id: activeConversationId,
+                aspect_ratio: document.getElementById("aspect-ratio-select").value,
+                image_size: document.getElementById("image-size-select").value
+            })
+        });
+        const loadingRow = document.getElementById("loading-row");
+        if (loadingRow) loadingRow.remove();
+        const data = await res.json();
+        if (!res.ok || !data.images || !data.images.length) {
+            const err = data.error || SELENA_ERROR_TEXT;
+            addTextMessageElement("ai", err);
+            activeConversation.messages.push({ role: "assistant", content: err });
+            saveConversations();
+            renderConversationList();
+            return;
+        }
+        addImageMessageElement("ai", data.text || "我已经为你生成了图片。", data.images);
+        activeConversation.messages.push({ role: "assistant", content: data.text || "我已经为你生成了图片。", type: "image", images: data.images });
+        saveConversations();
+        renderConversationList();
+    } catch (error) {
+        const loadingRow = document.getElementById("loading-row");
+        if (loadingRow) loadingRow.remove();
+        addTextMessageElement("ai", SELENA_ERROR_TEXT);
+        activeConversation.messages.push({ role: "assistant", content: SELENA_ERROR_TEXT });
+        saveConversations();
+        renderConversationList();
+    } finally {
+        setInputBusy(false);
+    }
+}
+async function sendPptRequest() {
+    const input = document.getElementById("message");
+    const typedMessage = input.value.trim();
+    if (currentController) return;
+    if (!typedMessage && !attachedFile) return;
+    const activeConversation = getActiveConversation();
+    if (!activeConversation) return;
+
+    const visibleUserMessage = attachedFile ? `📎 已上传文件：${attachedFile.filename}\n${typedMessage || "请根据这个文件生成一份 PPT。"}` : typedMessage;
+    activeConversation.messages.push({ role: "user", content: visibleUserMessage });
+    saveConversations();
+    renderConversationList();
+    if (!activeConversation.title || activeConversation.title === "新聊天") {
+        maybeGenerateConversationTitle(activeConversation, attachedFile ? attachedFile.filename : visibleUserMessage);
+    }
+    addTextMessageElement("user", visibleUserMessage);
+    input.value = "";
+    setInputBusy(true);
+    addTextMessageElement("ai", "", true);
+
+    try {
+        const res = await fetch("/chat-ppt", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                message: typedMessage,
+                conversation_id: activeConversationId,
+                upload_id: attachedFile ? attachedFile.upload_id : ""
+            })
+        });
+        const loadingRow = document.getElementById("loading-row");
+        if (loadingRow) loadingRow.remove();
+        const data = await res.json();
+        if (!res.ok || !data.download_url) {
+            const err = data.error || SELENA_ERROR_TEXT;
+            addTextMessageElement("ai", err);
+            activeConversation.messages.push({ role: "assistant", content: err });
+            saveConversations();
+            renderConversationList();
+            return;
+        }
+
+        addPptMessageElement("ai", data.text || "我已经为你生成了 PPT。", data);
+        activeConversation.messages.push({
+            role: "assistant",
+            content: data.text || "我已经为你生成了 PPT。",
+            type: "ppt",
+            download_url: data.download_url,
+            filename: data.filename,
+            ppt_title: data.ppt_title,
+            slide_count: data.slide_count,
+            image_count: data.image_count
+        });
+        saveConversations();
+        renderConversationList();
+        clearAttachedFile();
+    } catch (error) {
+        const loadingRow = document.getElementById("loading-row");
+        if (loadingRow) loadingRow.remove();
+        addTextMessageElement("ai", SELENA_ERROR_TEXT);
+        activeConversation.messages.push({ role: "assistant", content: SELENA_ERROR_TEXT });
+        saveConversations();
+        renderConversationList();
+    } finally {
+        setInputBusy(false);
+    }
+}
+
+async function clearCurrentConversation() {
+    if (currentController) return;
+    const activeConversation = getActiveConversation();
+    if (!activeConversation) return;
+    try {
+        await fetch("/clear", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversation_id: activeConversationId }) });
+    } catch (error) {}
+    activeConversation.messages = [{ role: "ai", content: SELENA_BOOT_MESSAGE }];
+    activeConversation.title = "新聊天";
+    saveConversations();
+    renderConversationList();
+    renderActiveConversation();
+    clearAttachedFile();
+}
+window.onload = function () {
+    updateThemeButton();
+    loadConversations();
+    document.getElementById("aspect-ratio-select").value = IMAGE_DEFAULTS.aspect_ratio || "1:1";
+    document.getElementById("image-size-select").value = IMAGE_DEFAULTS.image_size || "1K";
+    renderModeBar();
+    renderConversationList();
+    renderActiveConversation();
+    renderFileChip();
+    setupFileUpload();
+};
+</script>
+</body>
+</html>
