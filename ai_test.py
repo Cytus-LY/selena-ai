@@ -3,7 +3,7 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
-    api_key=os.getenv("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")
+    api_key=os.getenv("OPENROUTER_API_KEY")
 )
 
 response = client.chat.completions.create(

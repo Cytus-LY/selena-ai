@@ -36,6 +36,24 @@ SLIDE_W_IN = 13.333
 SLIDE_H_IN = 7.5
 FOOTER_Y_IN = 6.82
 
+# --- 统一页内节奏（英寸 / 磅）：标题 → 副文 → 正文区 ---
+PAGE_MARGIN_X = 1.0
+PAGE_TEXT_W = 10.22
+TITLE_TOP_IN = 0.62
+TITLE_BOX_H_IN = 0.70
+SUB_TOP_IN = 1.12
+SUB_BOX_H_IN = 0.52
+BODY_TOP_IN = 1.78
+BULLET_PARA_SPACE_PT = 5
+FOOTER_LINE_LEFT_IN = 0.78
+FOOTER_LINE_WIDTH_IN = 11.58
+
+# 要点内数字、年份、季度等加粗变色，形成视觉锚点（避免「整段同一粗细」）
+_BULLET_EMPH_RE = re.compile(
+    r"\d{4}年|Q[1-4]|H[1-2]|(?:\d{1,3}(?:,\d{3})+|\d+)\.?%|"
+    r"第[一二三四五六七八九十百千万\d]+[步点项期月周天]"
+)
+
 
 def _walk_json(node):
     if isinstance(node, dict):
@@ -152,7 +170,8 @@ def llm_generate_image_prompt(topic: str, slide_data: dict, theme: str) -> str:
         f"focus: {summary}" if summary else "",
         f"details: {'; '.join(bullets[:3])}" if bullets else "",
         f"caption hint: {caption}" if caption else "",
-        "modern, uncluttered, no text, no watermark, professional lighting",
+        "modern, uncluttered, professional lighting",
+        "no text, no letters, no words, no titles, no captions, no signage, no UI labels in the image, pure visual metaphor only, no watermark",
     ]
     return ", ".join([p for p in parts if p])
 
@@ -238,7 +257,8 @@ def generate_presentation_image_assets(prompt: str, aspect_ratio: str = "16:9", 
             "role": "user",
             "content": (
                 "Generate one clean presentation-style illustration. "
-                "No text, no watermark, no logo, no UI, no collage. "
+                "Strictly no text of any language: no letters, words, titles, captions, labels, or logos. "
+                "No watermark, no UI, no collage. Use only abstract or photographic visuals. "
                 f"Aspect ratio preference: {aspect_ratio}. "
                 f"Prompt: {prompt}"
             ),
@@ -439,11 +459,53 @@ def style_paragraph(paragraph, size=20, bold=False, color=None, align=None):
         paragraph.alignment = align
 
 
+def _append_emphasized_spans(paragraph, fragment: str, size: int, base_rgb, emph_rgb):
+    pos = 0
+    for m in _BULLET_EMPH_RE.finditer(fragment):
+        if m.start() > pos:
+            r = paragraph.add_run()
+            r.text = fragment[pos : m.start()]
+            r.font.size = Pt(size)
+            r.font.bold = False
+            r.font.color.rgb = base_rgb
+        r = paragraph.add_run()
+        r.text = m.group(0)
+        r.font.size = Pt(min(size + 1, 22))
+        r.font.bold = True
+        r.font.color.rgb = emph_rgb
+        pos = m.end()
+    if pos < len(fragment):
+        r = paragraph.add_run()
+        r.text = fragment[pos:]
+        r.font.size = Pt(size)
+        r.font.bold = False
+        r.font.color.rgb = base_rgb
+
+
 def clamp_text(text: str, max_len: int = 120) -> str:
     text = (text or "").strip()
     if len(text) <= max_len:
         return text
-    return text[: max_len - 1].rstrip() + "…"
+    candidate = text[:max_len]
+    cut_chars = ["。", "！", "？", ".", "!", "?", "；", ";", "，", ",", ":", "：", "、"]
+    last_pos = -1
+    for ch in cut_chars:
+        pos = candidate.rfind(ch)
+        if pos > last_pos:
+            last_pos = pos
+    if last_pos >= max(8, int(max_len * 0.55)):
+        return candidate[: last_pos + 1].strip()
+    shortened = candidate.rstrip("，,。.!！?？:：;；、 ")
+    if not shortened:
+        shortened = candidate.strip()
+    has_cjk = any("\u4e00" <= c <= "\u9fff" for c in shortened)
+    if has_cjk:
+        if shortened[-1] not in "。！？":
+            return shortened + "。"
+        return shortened
+    if shortened[-1] not in ".!?":
+        return shortened + "."
+    return shortened
 
 
 def adaptive_font_size(text: str, default: int, minimum: int, breakpoints=None) -> int:
@@ -474,7 +536,7 @@ def estimate_lines(text: str, box_width_in: float, font_size_pt: int, prefix_cha
     return max(1, int(math.ceil(effective_len / chars_per_line)))
 
 
-def estimate_text_block_height(texts, box_width_in: float, font_size_pt: int, line_spacing=1.22, paragraph_gap_pt=6, prefix_chars: float = 0.0) -> float:
+def estimate_text_block_height(texts, box_width_in: float, font_size_pt: int, line_spacing=1.22, paragraph_gap_pt=5, prefix_chars: float = 0.0) -> float:
     total_pt = 0.0
     items = list(texts or [])
     if not items:
@@ -503,10 +565,15 @@ def fit_bullets_to_box(points, box_width_in, box_height_in, preferred_size=18, m
     if not cleaned and fallback_text:
         cleaned = [fallback_text]
     cleaned = [shrink_text(x, max_len) for x in cleaned[:max_items]]
+    cleaned = [x for x in cleaned if isinstance(x, str) and x.strip()]
+    if not cleaned and fallback_text:
+        fb = shrink_text(str(fallback_text).strip(), max_len)
+        if fb and fb.strip():
+            cleaned = [fb]
     if not cleaned:
         return [], preferred_size, False
     for size in range(preferred_size, min_size - 1, -1):
-        needed_h = estimate_text_block_height(cleaned, box_width_in, size, line_spacing=1.18, paragraph_gap_pt=7, prefix_chars=2.2)
+        needed_h = estimate_text_block_height(cleaned, box_width_in, size, line_spacing=1.18, paragraph_gap_pt=BULLET_PARA_SPACE_PT, prefix_chars=2.2)
         if needed_h <= box_height_in:
             return cleaned, size, False
     trimmed = cleaned[:]
@@ -515,12 +582,13 @@ def fit_bullets_to_box(points, box_width_in, box_height_in, preferred_size=18, m
         trimmed = trimmed[:-1]
         reduced = True
         for size in range(preferred_size, min_size - 1, -1):
-            needed_h = estimate_text_block_height(trimmed, box_width_in, size, line_spacing=1.18, paragraph_gap_pt=7, prefix_chars=2.2)
+            needed_h = estimate_text_block_height(trimmed, box_width_in, size, line_spacing=1.18, paragraph_gap_pt=BULLET_PARA_SPACE_PT, prefix_chars=2.2)
             if needed_h <= box_height_in:
                 return trimmed, size, reduced
     compact = [shrink_text(x, max(16, max_len - 10)) for x in trimmed]
+    compact = [x for x in compact if isinstance(x, str) and x.strip()]
     for size in range(preferred_size, min_size - 1, -1):
-        needed_h = estimate_text_block_height(compact, box_width_in, size, line_spacing=1.16, paragraph_gap_pt=5, prefix_chars=2.2)
+        needed_h = estimate_text_block_height(compact, box_width_in, size, line_spacing=1.16, paragraph_gap_pt=BULLET_PARA_SPACE_PT, prefix_chars=2.2)
         if needed_h <= box_height_in:
             return compact, size, True
     return compact[:2], min_size, True
@@ -545,16 +613,57 @@ def fit_single_text_to_box(text: str, box_width_in: float, box_height_in: float,
     return shrink_text(txt, max_len or max(18, int(box_width_in * 10))), min_size
 
 
-def populate_bullets(tf, bullet_points, size, color, space_after=6):
+def populate_bullets(tf, bullet_points, size, color, space_after=None, *, accent_color=None):
+    space_after = BULLET_PARA_SPACE_PT if space_after is None else space_after
+    emph_rgb = accent_color if accent_color is not None else color
     tf.clear()
     tf.word_wrap = True
     tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
     tf.vertical_anchor = MSO_VERTICAL_ANCHOR.TOP
-    for idx, bullet in enumerate(bullet_points):
-        p = tf.paragraphs[0] if idx == 0 else tf.add_paragraph()
-        p.text = f"• {bullet}"
-        style_paragraph(p, size=size, color=color)
+    idx_out = 0
+    for bullet in bullet_points or []:
+        b = (bullet or "").strip()
+        if not b:
+            continue
+        p = tf.paragraphs[0] if idx_out == 0 else tf.add_paragraph()
+        p.text = ""
+        p.level = 0
+        rd = p.add_run()
+        rd.text = "• "
+        rd.font.size = Pt(size)
+        rd.font.color.rgb = color
+        if _BULLET_EMPH_RE.search(b):
+            _append_emphasized_spans(p, b, size, color, emph_rgb)
+        else:
+            rb = p.add_run()
+            rb.text = b
+            rb.font.size = Pt(size)
+            rb.font.color.rgb = color
         p.space_after = Pt(space_after)
+        idx_out += 1
+
+
+def append_bullet_paragraph_to_frame(tf, body: str, size: int, color, emph_color, space_after_pt=None):
+    """向已有 text_frame 追加一条要点（不清空），用于图文页 caption 后接 bullets。"""
+    space_after_pt = BULLET_PARA_SPACE_PT if space_after_pt is None else space_after_pt
+    b = (body or "").strip()
+    if not b:
+        return
+    p = tf.add_paragraph()
+    p.text = ""
+    p.level = 0
+    rd = p.add_run()
+    rd.text = "• "
+    rd.font.size = Pt(size)
+    rd.font.color.rgb = color
+    if _BULLET_EMPH_RE.search(b):
+        _append_emphasized_spans(p, b, size, color, emph_color)
+    else:
+        rb = p.add_run()
+        rb.text = b
+        rb.font.size = Pt(size)
+        rb.font.color.rgb = color
+    p.space_after = Pt(space_after_pt)
 
 
 def safe_add_textbox(slide, left_in, top_in, width_in, height_in, text="", auto_fit=True):
@@ -578,8 +687,39 @@ def add_card(slide, left, top, width, height, fill_color, line_color=None, line_
     return shape
 
 
+def add_accent_vertical_rule(slide, theme_tokens, x_in: float, top_in: float, height_in: float):
+    bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x_in), Inches(top_in), Inches(0.045), Inches(height_in))
+    bar.fill.solid()
+    bar.fill.fore_color.rgb = theme_tokens["secondary"]
+    bar.line.fill.background()
+    return bar
+
+
+def add_hero_image_frame(slide, theme_tokens, left_in: float, top_in: float, width_in: float, height_in: float, *, bold: bool = False):
+    shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(left_in), Inches(top_in), Inches(width_in), Inches(height_in))
+    shape.fill.solid()
+    shape.fill.fore_color.rgb = theme_tokens["light"]
+    shape.line.color.rgb = theme_tokens["secondary"] if bold else theme_tokens["line"]
+    shape.line.width = Pt(1.85 if bold else 1.05)
+    return shape
+
+
+def add_column_divider(slide, theme_tokens, x_in: float, top_in: float, height_in: float):
+    ln = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x_in), Inches(top_in), Inches(0.02), Inches(height_in))
+    ln.fill.solid()
+    ln.fill.fore_color.rgb = theme_tokens["line"]
+    ln.line.fill.background()
+    return ln
+
+
 def add_footer(slide, theme_tokens, page_text: str):
-    line = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.78), Inches(FOOTER_Y_IN), Inches(11.6), Inches(0.03))
+    line = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE,
+        Inches(FOOTER_LINE_LEFT_IN),
+        Inches(FOOTER_Y_IN),
+        Inches(FOOTER_LINE_WIDTH_IN),
+        Inches(0.03),
+    )
     line.fill.solid()
     line.fill.fore_color.rgb = theme_tokens["line"]
     line.line.fill.background()
@@ -609,11 +749,18 @@ def render_cover_slide(prs: Presentation, ppt_data: dict, theme_tokens: dict):
     p = tf.paragraphs[0]
     p.text = title
     style_paragraph(p, size=title_size, bold=True, color=theme_tokens["primary"])
-    subtitle = clamp_text(ppt_data.get("subtitle") or "AI-generated presentation", 52)
-    _, tf2 = safe_add_textbox(slide, 1.38, 2.38, 7.6, 0.75, auto_fit=True)
+    subtitle_text, sub_size = fit_single_text_to_box(
+        ppt_data.get("subtitle") or "面向管理层的分析与行动建议",
+        9.2,
+        1.45,
+        17,
+        12,
+        max_len=118,
+    )
+    _, tf2 = safe_add_textbox(slide, 1.35, 2.42, 9.2, 1.45, auto_fit=True)
     p3 = tf2.paragraphs[0]
-    p3.text = subtitle
-    style_paragraph(p3, size=16, color=theme_tokens["muted"])
+    p3.text = subtitle_text
+    style_paragraph(p3, size=sub_size, color=theme_tokens["muted"])
     _, tf4 = safe_add_textbox(slide, 1.38, 5.72, 4.3, 0.34, auto_fit=True)
     p4 = tf4.paragraphs[0]
     p4.text = clamp_text(ppt_data.get("author") or "Generated by Selena AI", 36)
@@ -624,40 +771,147 @@ def render_cover_slide(prs: Presentation, ppt_data: dict, theme_tokens: dict):
 def render_section_slide(prs, slide_data, theme_tokens, page_text):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_full_rect(slide, 0, 0, prs.slide_width, prs.slide_height, theme_tokens["light"])
-    add_full_rect(slide, Inches(0), Inches(0), Inches(13.333), Inches(0.3), theme_tokens["primary"])
-    add_card(slide, Inches(0.92), Inches(1.45), Inches(11.1), Inches(3.95), theme_tokens["accent"], theme_tokens["line"], 1.0)
-    title = clamp_text(slide_data.get("title") or "Section", 28)
-    _, tf = safe_add_textbox(slide, 1.32, 2.1, 9.0, 0.95, auto_fit=True)
-    p = tf.paragraphs[0]
-    p.text = title
-    style_paragraph(p, size=28, bold=True, color=theme_tokens["primary"], align=PP_ALIGN.CENTER)
-    summary = clamp_text(slide_data.get("summary") or "", 72)
-    _, tf2 = safe_add_textbox(slide, 2.05, 3.2, 7.6, 0.8, auto_fit=True)
-    p2 = tf2.paragraphs[0]
-    p2.text = summary
-    style_paragraph(p2, size=15, color=theme_tokens["muted"], align=PP_ALIGN.CENTER)
+    lv = slide_data.get("layout_variant") or "section_center_card"
+
+    if lv == "section_editorial":
+        add_full_rect(slide, Inches(0), Inches(0), Inches(SLIDE_W_IN), Inches(0.22), theme_tokens["primary"])
+        add_accent_vertical_rule(slide, theme_tokens, 0.88, 1.12, 4.85)
+        title_text, title_sz = fit_single_text_to_box(
+            slide_data.get("title") or "Section", 9.8, 0.72, 26, 19, max_len=34, bold=True
+        )
+        _, tf = safe_add_textbox(slide, 1.12, 1.18, 9.8, 0.72, auto_fit=True)
+        p = tf.paragraphs[0]
+        p.text = title_text
+        style_paragraph(p, size=title_sz, bold=True, color=theme_tokens["primary"])
+        summary_text, sum_sz = fit_single_text_to_box(
+            slide_data.get("summary") or "",
+            10.15,
+            4.35,
+            17,
+            12,
+            max_len=240,
+        )
+        _, tf2 = safe_add_textbox(slide, 1.12, 2.05, 10.15, 4.35, auto_fit=True)
+        p2 = tf2.paragraphs[0]
+        p2.text = summary_text
+        style_paragraph(p2, size=sum_sz, color=theme_tokens["muted"])
+    else:
+        add_full_rect(slide, Inches(0), Inches(0), Inches(SLIDE_W_IN), Inches(0.28), theme_tokens["primary"])
+        add_card(slide, Inches(0.88), Inches(1.22), Inches(11.15), Inches(3.55), theme_tokens["accent"], theme_tokens["line"], 0.85)
+        title_text, title_sz = fit_single_text_to_box(
+            slide_data.get("title") or "Section", 9.0, 0.82, 28, 20, max_len=32, bold=True
+        )
+        _, tf = safe_add_textbox(slide, 1.28, 1.58, 9.0, 0.82, auto_fit=True)
+        p = tf.paragraphs[0]
+        p.text = title_text
+        style_paragraph(p, size=title_sz, bold=True, color=theme_tokens["primary"], align=PP_ALIGN.CENTER)
+        summary_text, sum_sz = fit_single_text_to_box(
+            slide_data.get("summary") or "",
+            8.9,
+            2.65,
+            16,
+            11,
+            max_len=240,
+        )
+        _, tf2 = safe_add_textbox(slide, 1.38, 2.48, 8.9, 2.65, auto_fit=True)
+        p2 = tf2.paragraphs[0]
+        p2.text = summary_text
+        style_paragraph(p2, size=sum_sz, color=theme_tokens["muted"], align=PP_ALIGN.CENTER)
     add_footer(slide, theme_tokens, page_text)
-    add_speaker_notes(slide, slide_data.get("speaker_note") or summary)
+    add_speaker_notes(slide, slide_data.get("speaker_note") or slide_data.get("summary") or "")
     return slide
 
 
 def render_bullet_slide(prs, slide_data, theme_tokens, page_text):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_full_rect(slide, 0, 0, prs.slide_width, prs.slide_height, theme_tokens["light"])
-    title_text, title_size = fit_single_text_to_box(slide_data.get("title") or "Untitled", 10.0, 0.62, 23, 18, max_len=34, bold=True)
-    _, title_tf = safe_add_textbox(slide, 1.0, 0.72, 10.0, 0.62, auto_fit=True)
+    lv = slide_data.get("layout_variant") or "bullet_card_standard"
+    lv = {"card_clean": "bullet_card_standard", "card_dense": "bullet_card_compact"}.get(lv, lv)
+
+    raw_bullets = [str(b).strip() for b in (slide_data.get("bullets") or []) if str(b).strip()]
+    sparse = len(raw_bullets) <= 2 or sum(len(str(x)) for x in raw_bullets) < 100
+    mx, mw = PAGE_MARGIN_X, PAGE_TEXT_W
+    emph = theme_tokens["secondary"]
+
+    title_text, title_size = fit_single_text_to_box(
+        slide_data.get("title") or "Untitled", mw, TITLE_BOX_H_IN, 24, 18, max_len=34, bold=True
+    )
+    _, title_tf = safe_add_textbox(slide, mx, TITLE_TOP_IN, mw, TITLE_BOX_H_IN, auto_fit=True)
     p = title_tf.paragraphs[0]
     p.text = title_text
     style_paragraph(p, size=title_size, bold=True, color=theme_tokens["primary"])
-    summary_text, sum_size = fit_single_text_to_box(slide_data.get("summary") or "", 9.95, 0.5, 15, 11, max_len=68)
-    _, sub_tf = safe_add_textbox(slide, 1.0, 1.42, 9.95, 0.5, auto_fit=True)
+    summary_text, sum_size = fit_single_text_to_box(
+        slide_data.get("summary") or "", mw, SUB_BOX_H_IN, 14, 11, max_len=72
+    )
+    _, sub_tf = safe_add_textbox(slide, mx, SUB_TOP_IN, mw, SUB_BOX_H_IN, auto_fit=True)
     p2 = sub_tf.paragraphs[0]
     p2.text = summary_text
     style_paragraph(p2, size=sum_size, color=theme_tokens["muted"])
-    add_card(slide, Inches(0.98), Inches(2.08), Inches(10.72), Inches(3.72), theme_tokens["accent"], theme_tokens["line"], 1.0)
-    bullet_points, bullet_size, _ = fit_bullets_to_box(slide_data.get("bullets"), 9.1, 2.95, preferred_size=17, min_size=12, max_items=5, max_len=58, fallback_text=summary_text or "关键点")
-    _, body_tf = safe_add_textbox(slide, 1.35, 2.42, 9.15, 3.05, auto_fit=True)
-    populate_bullets(body_tf, bullet_points, bullet_size, theme_tokens["primary"], space_after=6)
+
+    body_w = mw - 0.12
+    inner_left = mx + 0.12
+
+    if lv == "bullet_plain_bar":
+        body_top = 1.72 if sparse else 1.86
+        body_h = 3.25 if sparse else 4.36
+        add_accent_vertical_rule(slide, theme_tokens, mx - 0.02, body_top, body_h)
+        bullet_points, bullet_size, _ = fit_bullets_to_box(
+            raw_bullets, body_w - 0.1, body_h - 0.06, preferred_size=18, min_size=13, max_items=5, max_len=60,
+            fallback_text=summary_text or "关键点",
+        )
+        _, body_tf = safe_add_textbox(slide, inner_left, body_top, body_w, body_h, auto_fit=True)
+        populate_bullets(body_tf, bullet_points, bullet_size, theme_tokens["primary"], accent_color=emph)
+
+    elif lv == "bullet_plain_two_col":
+        if len(raw_bullets) >= 4:
+            mid = (len(raw_bullets) + 1) // 2
+            left_src, right_src = raw_bullets[:mid], raw_bullets[mid:]
+            col_top = 1.84 if sparse else 1.92
+            col_h = 3.35 if sparse else 4.42
+            add_column_divider(slide, theme_tokens, 6.62, col_top, col_h)
+            lp, lsz, _ = fit_bullets_to_box(left_src, 4.95, col_h, preferred_size=16, min_size=12, max_items=4, max_len=52, fallback_text=summary_text)
+            rp, rsz, _ = fit_bullets_to_box(right_src, 4.95, col_h, preferred_size=16, min_size=12, max_items=4, max_len=52, fallback_text=summary_text)
+            _, ltf = safe_add_textbox(slide, 1.05, col_top, 5.05, col_h, auto_fit=True)
+            populate_bullets(ltf, lp, lsz, theme_tokens["primary"], accent_color=emph)
+            _, rtf = safe_add_textbox(slide, 6.82, col_top, 5.05, col_h, auto_fit=True)
+            populate_bullets(rtf, rp, rsz, theme_tokens["primary"], accent_color=emph)
+        else:
+            body_top = 1.72 if sparse else 1.86
+            body_h = 3.25 if sparse else 4.36
+            add_accent_vertical_rule(slide, theme_tokens, mx - 0.02, body_top, body_h)
+            bullet_points, bullet_size, _ = fit_bullets_to_box(
+                raw_bullets, body_w - 0.1, body_h - 0.06, preferred_size=18, min_size=13, max_items=5, max_len=60,
+                fallback_text=summary_text or "关键点",
+            )
+            _, body_tf = safe_add_textbox(slide, inner_left, body_top, body_w, body_h, auto_fit=True)
+            populate_bullets(body_tf, bullet_points, bullet_size, theme_tokens["primary"], accent_color=emph)
+
+    elif lv == "bullet_card_compact":
+        card_top = 1.82
+        card_h = 2.22 if sparse else 2.72
+        card_w = min(10.88, SLIDE_W_IN - 2 * mx + 0.12)
+        add_card(slide, Inches(mx - 0.02), Inches(card_top), Inches(card_w), Inches(card_h), theme_tokens["accent"], theme_tokens["line"], 0.75)
+        inner_w = card_w - 0.36
+        bullet_points, bullet_size, _ = fit_bullets_to_box(
+            raw_bullets, inner_w, card_h - 0.4, preferred_size=17, min_size=12, max_items=5, max_len=56,
+            fallback_text=summary_text or "关键点",
+        )
+        _, body_tf = safe_add_textbox(slide, mx + 0.16, card_top + 0.18, inner_w, card_h - 0.36, auto_fit=True)
+        populate_bullets(body_tf, bullet_points, bullet_size, theme_tokens["primary"], accent_color=emph)
+
+    else:
+        card_top = 1.82
+        card_h = 2.32 if sparse else (2.72 if len(raw_bullets) <= 3 else 3.08)
+        card_w = min(10.92, SLIDE_W_IN - 2 * mx + 0.12)
+        add_card(slide, Inches(mx - 0.02), Inches(card_top), Inches(card_w), Inches(card_h), theme_tokens["accent"], theme_tokens["line"], 0.85)
+        inner_w = card_w - 0.38
+        bullet_points, bullet_size, _ = fit_bullets_to_box(
+            raw_bullets, inner_w, card_h - 0.38, preferred_size=17, min_size=12, max_items=5, max_len=58,
+            fallback_text=summary_text or "关键点",
+        )
+        _, body_tf = safe_add_textbox(slide, mx + 0.16, card_top + 0.18, inner_w, card_h - 0.34, auto_fit=True)
+        populate_bullets(body_tf, bullet_points, bullet_size, theme_tokens["primary"], accent_color=emph)
+
     add_footer(slide, theme_tokens, page_text)
     add_speaker_notes(slide, slide_data.get("speaker_note") or summary_text)
     return slide
@@ -666,123 +920,237 @@ def render_bullet_slide(prs, slide_data, theme_tokens, page_text):
 def render_highlight_slide(prs, slide_data, theme_tokens, page_text):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_full_rect(slide, 0, 0, prs.slide_width, prs.slide_height, theme_tokens["light"])
-    add_full_rect(slide, Inches(0), Inches(0), Inches(13.333), Inches(0.22), theme_tokens["secondary"])
-    add_card(slide, Inches(0.95), Inches(1.08), Inches(11.2), Inches(4.9), theme_tokens["accent"], theme_tokens["line"], 1.2)
-    title_text, title_size = fit_single_text_to_box(slide_data.get("title") or "Key Message", 9.8, 0.55, 18, 13, max_len=26, bold=True)
-    _, title_tf = safe_add_textbox(slide, 1.32, 1.42, 9.8, 0.55, auto_fit=True)
-    p = title_tf.paragraphs[0]
-    p.text = title_text
-    style_paragraph(p, size=title_size, bold=True, color=theme_tokens["secondary"])
-    highlight_text, hl_size = fit_single_text_to_box(slide_data.get("highlight") or slide_data.get("summary") or "", 9.7, 1.6, 30, 18, max_len=62, bold=True)
-    _, highlight_tf = safe_add_textbox(slide, 1.32, 2.1, 9.7, 1.6, auto_fit=True)
-    hp = highlight_tf.paragraphs[0]
-    hp.text = highlight_text
-    style_paragraph(hp, size=hl_size, bold=True, color=theme_tokens["primary"], align=PP_ALIGN.CENTER)
-    closing_text, close_size = fit_single_text_to_box(slide_data.get("closing") or slide_data.get("summary") or "", 8.8, 0.66, 14, 11, max_len=60)
-    _, close_tf = safe_add_textbox(slide, 1.8, 4.45, 8.8, 0.66, auto_fit=True)
-    cp = close_tf.paragraphs[0]
-    cp.text = closing_text
-    style_paragraph(cp, size=close_size, color=theme_tokens["muted"], align=PP_ALIGN.CENTER)
+    lv = slide_data.get("layout_variant") or "hero_center"
+
+    if lv == "band_top":
+        add_full_rect(slide, Inches(0), Inches(0), Inches(SLIDE_W_IN), Inches(0.95), theme_tokens["primary"])
+        title_text, title_size = fit_single_text_to_box(slide_data.get("title") or "Key Message", 10.2, 0.48, 17, 12, max_len=28, bold=True)
+        _, title_tf = safe_add_textbox(slide, 1.05, 0.38, 10.2, 0.48, auto_fit=True)
+        p = title_tf.paragraphs[0]
+        p.text = title_text
+        style_paragraph(p, size=title_size, bold=True, color=theme_tokens["light"])
+        highlight_text, hl_size = fit_single_text_to_box(
+            slide_data.get("highlight") or slide_data.get("summary") or "", 10.4, 2.05, 30, 20, max_len=68, bold=True
+        )
+        _, highlight_tf = safe_add_textbox(slide, 0.95, 1.65, 10.4, 2.05, auto_fit=True)
+        hp = highlight_tf.paragraphs[0]
+        hp.text = highlight_text
+        style_paragraph(hp, size=hl_size, bold=True, color=theme_tokens["primary"], align=PP_ALIGN.CENTER)
+        closing_text, close_size = fit_single_text_to_box(slide_data.get("closing") or slide_data.get("summary") or "", 9.2, 0.72, 14, 11, max_len=64)
+        _, close_tf = safe_add_textbox(slide, 1.05, 4.35, 9.2, 0.72, auto_fit=True)
+        cp = close_tf.paragraphs[0]
+        cp.text = closing_text
+        style_paragraph(cp, size=close_size, color=theme_tokens["muted"], align=PP_ALIGN.CENTER)
+    else:
+        add_full_rect(slide, Inches(0), Inches(0), Inches(SLIDE_W_IN), Inches(0.22), theme_tokens["secondary"])
+        add_card(slide, Inches(0.92), Inches(1.02), Inches(11.25), Inches(4.35), theme_tokens["accent"], theme_tokens["line"], 0.95)
+        title_text, title_size = fit_single_text_to_box(slide_data.get("title") or "Key Message", 9.8, 0.55, 18, 13, max_len=26, bold=True)
+        _, title_tf = safe_add_textbox(slide, 1.32, 1.35, 9.8, 0.55, auto_fit=True)
+        p = title_tf.paragraphs[0]
+        p.text = title_text
+        style_paragraph(p, size=title_size, bold=True, color=theme_tokens["secondary"])
+        highlight_text, hl_size = fit_single_text_to_box(slide_data.get("highlight") or slide_data.get("summary") or "", 9.7, 1.55, 30, 18, max_len=62, bold=True)
+        _, highlight_tf = safe_add_textbox(slide, 1.32, 2.02, 9.7, 1.55, auto_fit=True)
+        hp = highlight_tf.paragraphs[0]
+        hp.text = highlight_text
+        style_paragraph(hp, size=hl_size, bold=True, color=theme_tokens["primary"], align=PP_ALIGN.CENTER)
+        closing_text, close_size = fit_single_text_to_box(slide_data.get("closing") or slide_data.get("summary") or "", 8.8, 0.66, 14, 11, max_len=60)
+        _, close_tf = safe_add_textbox(slide, 1.8, 4.25, 8.8, 0.66, auto_fit=True)
+        cp = close_tf.paragraphs[0]
+        cp.text = closing_text
+        style_paragraph(cp, size=close_size, color=theme_tokens["muted"], align=PP_ALIGN.CENTER)
     add_footer(slide, theme_tokens, page_text)
-    add_speaker_notes(slide, slide_data.get("speaker_note") or highlight_text)
+    add_speaker_notes(slide, slide_data.get("speaker_note") or (slide_data.get("highlight") or ""))
     return slide
 
 
 def render_two_column_slide(prs, slide_data, theme_tokens, page_text):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_full_rect(slide, 0, 0, prs.slide_width, prs.slide_height, theme_tokens["light"])
-    title_text, title_size = fit_single_text_to_box(slide_data.get("title") or "Two Column", 10.3, 0.6, 22, 17, max_len=34, bold=True)
-    _, title_tf = safe_add_textbox(slide, 0.95, 0.68, 10.3, 0.6, auto_fit=True)
+    lv = slide_data.get("layout_variant") or "two_column_cards"
+    title_text, title_size = fit_single_text_to_box(
+        slide_data.get("title") or "Two Column", PAGE_TEXT_W, TITLE_BOX_H_IN - 0.06, 22, 17, max_len=34, bold=True
+    )
+    _, title_tf = safe_add_textbox(slide, PAGE_MARGIN_X, TITLE_TOP_IN + 0.04, PAGE_TEXT_W, TITLE_BOX_H_IN - 0.06, auto_fit=True)
     p = title_tf.paragraphs[0]
     p.text = title_text
     style_paragraph(p, size=title_size, bold=True, color=theme_tokens["primary"])
-    summary_text, sum_size = fit_single_text_to_box(slide_data.get("summary") or "", 10.0, 0.5, 15, 11, max_len=62)
-    _, sub_tf = safe_add_textbox(slide, 0.95, 1.38, 10.0, 0.5, auto_fit=True)
+    summary_text, sum_size = fit_single_text_to_box(slide_data.get("summary") or "", PAGE_TEXT_W, SUB_BOX_H_IN, 14, 11, max_len=64)
+    _, sub_tf = safe_add_textbox(slide, PAGE_MARGIN_X, SUB_TOP_IN + 0.02, PAGE_TEXT_W, SUB_BOX_H_IN, auto_fit=True)
     p2 = sub_tf.paragraphs[0]
     p2.text = summary_text
     style_paragraph(p2, size=sum_size, color=theme_tokens["muted"])
-    add_card(slide, Inches(0.95), Inches(2.08), Inches(5.2), Inches(3.95), theme_tokens["accent"], theme_tokens["line"], 1.0)
-    add_card(slide, Inches(6.35), Inches(2.08), Inches(5.2), Inches(3.95), theme_tokens["accent"], theme_tokens["line"], 1.0)
-    left_title, left_title_size = fit_single_text_to_box(slide_data.get("left_title") or "左侧观点", 4.3, 0.34, 16, 12, max_len=18, bold=True)
-    left_points, left_size, _ = fit_bullets_to_box(slide_data.get("left_points") or (slide_data.get("bullets") or [])[:2], 4.3, 2.85, preferred_size=15, min_size=11, max_items=3, max_len=34, fallback_text=summary_text)
-    _, left_tf = safe_add_textbox(slide, 1.15, 2.45, 4.35, 3.35, auto_fit=True)
-    lp = left_tf.paragraphs[0]
-    lp.text = left_title
-    style_paragraph(lp, size=left_title_size, bold=True, color=theme_tokens["primary"])
-    for point in left_points:
-        pp = left_tf.add_paragraph()
-        pp.text = f"• {point}"
-        style_paragraph(pp, size=left_size, color=theme_tokens["primary"])
-        pp.space_after = Pt(5)
-    right_title, right_title_size = fit_single_text_to_box(slide_data.get("right_title") or "右侧解释", 4.3, 0.34, 16, 12, max_len=18, bold=True)
-    right_points, right_size, _ = fit_bullets_to_box(slide_data.get("right_points") or (slide_data.get("bullets") or [])[2:], 4.3, 2.85, preferred_size=15, min_size=11, max_items=3, max_len=34, fallback_text=summary_text)
-    _, right_tf = safe_add_textbox(slide, 6.5, 2.45, 4.35, 3.35, auto_fit=True)
-    rp = right_tf.paragraphs[0]
-    rp.text = right_title
-    style_paragraph(rp, size=right_title_size, bold=True, color=theme_tokens["primary"])
-    for point in right_points:
-        pp = right_tf.add_paragraph()
-        pp.text = f"• {point}"
-        style_paragraph(pp, size=right_size, color=theme_tokens["primary"])
-        pp.space_after = Pt(5)
+
+    if lv == "two_column_open":
+        add_column_divider(slide, theme_tokens, 6.58, 1.88, 4.05)
+        add_full_rect(slide, Inches(0.95), Inches(1.82), Inches(5.15), Inches(0.36), theme_tokens["primary"])
+        add_full_rect(slide, Inches(6.35), Inches(1.82), Inches(5.15), Inches(0.36), theme_tokens["secondary"])
+    else:
+        add_card(slide, Inches(0.95), Inches(2.02), Inches(5.15), Inches(3.72), theme_tokens["accent"], theme_tokens["line"], 0.85)
+        add_card(slide, Inches(6.35), Inches(2.02), Inches(5.15), Inches(3.72), theme_tokens["accent"], theme_tokens["line"], 0.85)
+
+    left_title, left_title_size = fit_single_text_to_box(slide_data.get("left_title") or "左侧观点", 4.45, 0.34, 16, 12, max_len=20, bold=True)
+    left_points, left_size, _ = fit_bullets_to_box(
+        slide_data.get("left_points") or (slide_data.get("bullets") or [])[:2],
+        4.55, 2.85 if lv == "two_column_open" else 2.75,
+        preferred_size=15, min_size=11, max_items=4, max_len=38, fallback_text=summary_text,
+    )
+    if lv == "two_column_open":
+        _, l_head = safe_add_textbox(slide, 1.05, 1.86, 4.95, 0.3, auto_fit=True)
+        lhp = l_head.paragraphs[0]
+        lhp.text = left_title
+        style_paragraph(lhp, size=left_title_size, bold=True, color=theme_tokens["light"])
+        _, left_tf = safe_add_textbox(slide, 1.05, 2.28, 4.95, 3.15, auto_fit=True)
+        populate_bullets(left_tf, left_points, left_size, theme_tokens["primary"], accent_color=theme_tokens["secondary"])
+    else:
+        lt_y = 2.38
+        _, left_tf = safe_add_textbox(slide, 1.12, lt_y, 4.55, 3.2, auto_fit=True)
+        lp = left_tf.paragraphs[0]
+        lp.text = left_title
+        style_paragraph(lp, size=left_title_size, bold=True, color=theme_tokens["primary"])
+        for point in left_points:
+            pp = left_tf.add_paragraph()
+            pp.text = f"• {point}"
+            style_paragraph(pp, size=left_size, color=theme_tokens["primary"])
+            pp.space_after = Pt(5)
+
+    right_title, right_title_size = fit_single_text_to_box(slide_data.get("right_title") or "右侧解释", 4.45, 0.34, 16, 12, max_len=20, bold=True)
+    right_points, right_size, _ = fit_bullets_to_box(
+        slide_data.get("right_points") or (slide_data.get("bullets") or [])[2:],
+        4.55, 2.85 if lv == "two_column_open" else 2.75,
+        preferred_size=15, min_size=11, max_items=4, max_len=38, fallback_text=summary_text,
+    )
+    if lv == "two_column_open":
+        _, r_head = safe_add_textbox(slide, 6.45, 1.86, 4.95, 0.3, auto_fit=True)
+        rhp = r_head.paragraphs[0]
+        rhp.text = right_title
+        style_paragraph(rhp, size=right_title_size, bold=True, color=theme_tokens["light"])
+        _, right_tf = safe_add_textbox(slide, 6.45, 2.28, 4.95, 3.15, auto_fit=True)
+        populate_bullets(right_tf, right_points, right_size, theme_tokens["primary"], accent_color=theme_tokens["secondary"])
+    else:
+        _, right_tf = safe_add_textbox(slide, 6.52, 2.38, 4.55, 3.2, auto_fit=True)
+        rp = right_tf.paragraphs[0]
+        rp.text = right_title
+        style_paragraph(rp, size=right_title_size, bold=True, color=theme_tokens["primary"])
+        for point in right_points:
+            pp = right_tf.add_paragraph()
+            pp.text = f"• {point}"
+            style_paragraph(pp, size=right_size, color=theme_tokens["primary"])
+            pp.space_after = Pt(5)
+
     add_footer(slide, theme_tokens, page_text)
     add_speaker_notes(slide, slide_data.get("speaker_note") or summary_text)
     return slide
 
 
+def _image_slide_body_fallback(slide_data: dict, ref_keys: set) -> str:
+    for key in ("speaker_note", "closing", "highlight"):
+        t = (slide_data.get(key) or "").strip()
+        if t and _norm_text(t) not in ref_keys:
+            return t
+    return "请结合图示与页顶结论，落实下一步负责人、时间节点与交付物（详见演讲者备注）。"
+
+
+def _image_slide_caption_when_missing(slide_data: dict, ref_keys: set) -> str:
+    sn = (slide_data.get("speaker_note") or "").strip()
+    if sn:
+        chunk = sn
+        for sep in ("。", "！", "？", ".", "!", "?"):
+            if sep in sn:
+                chunk = sn.split(sep)[0].strip() + sep
+                break
+        else:
+            chunk = clamp_text(sn, 52)
+        if chunk and _norm_text(chunk) not in ref_keys:
+            return chunk
+    cl = (slide_data.get("closing") or "").strip()
+    if cl and _norm_text(cl) not in ref_keys:
+        return clamp_text(cl, 52)
+    return "行动要点"
+
+
 def render_image_slide(prs, slide_data, theme_tokens, page_text, image_on_left=True):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_full_rect(slide, 0, 0, prs.slide_width, prs.slide_height, theme_tokens["light"])
-    title_text, title_size = fit_single_text_to_box(slide_data.get("title") or "Visual Slide", 10.6, 0.62, 22, 17, max_len=30, bold=True)
-    _, title_tf = safe_add_textbox(slide, 0.82, 0.56, 10.6, 0.62, auto_fit=True)
+    lv = slide_data.get("layout_variant") or "image_hero_soft"
+    bold_frame = lv == "image_hero_bold"
+
+    title_text, title_size = fit_single_text_to_box(
+        slide_data.get("title") or "Visual Slide", PAGE_TEXT_W, TITLE_BOX_H_IN, 22, 17, max_len=32, bold=True
+    )
+    _, title_tf = safe_add_textbox(slide, PAGE_MARGIN_X, TITLE_TOP_IN, PAGE_TEXT_W, TITLE_BOX_H_IN, auto_fit=True)
     p = title_tf.paragraphs[0]
     p.text = title_text
     style_paragraph(p, size=title_size, bold=True, color=theme_tokens["primary"])
-    summary_text, sum_size = fit_single_text_to_box(slide_data.get("summary") or "", 10.6, 0.5, 14, 11, max_len=60)
-    _, summary_tf = safe_add_textbox(slide, 0.82, 1.22, 10.6, 0.5, auto_fit=True)
+    summary_text, sum_size = fit_single_text_to_box(slide_data.get("summary") or "", PAGE_TEXT_W, SUB_BOX_H_IN, 14, 11, max_len=76)
+    _, summary_tf = safe_add_textbox(slide, PAGE_MARGIN_X, SUB_TOP_IN, PAGE_TEXT_W, SUB_BOX_H_IN, auto_fit=True)
     p2 = summary_tf.paragraphs[0]
     p2.text = summary_text
     style_paragraph(p2, size=sum_size, color=theme_tokens["muted"])
-    img_w = 5.0
-    text_w = 4.9
-    block_h = 3.85
-    img_left = 0.82 if image_on_left else 7.51
-    text_left = 6.05 if image_on_left else 0.82
-    block_top = 1.95
-    add_card(slide, Inches(img_left), Inches(block_top), Inches(img_w), Inches(block_h), theme_tokens["accent"], theme_tokens["line"], 1.0)
+
+    margin = PAGE_MARGIN_X
+    content_w = SLIDE_W_IN - 2 * margin
+    gap = 0.2
+    img_w = round(content_w * 0.58, 3)
+    text_w = max(3.55, content_w - img_w - gap)
+    block_h = min(4.52, FOOTER_Y_IN - 0.35 - BODY_TOP_IN)
+    block_top = BODY_TOP_IN + 0.04
+    if image_on_left:
+        img_left = margin
+        text_left = margin + img_w + gap
+    else:
+        text_left = margin
+        img_left = margin + text_w + gap
+
+    add_hero_image_frame(slide, theme_tokens, img_left, block_top, img_w, block_h, bold=bold_frame)
     image_path = slide_data.get("image_path") or ""
     if image_path and os.path.exists(image_path):
-        add_picture_fit(slide, image_path, Inches(img_left), Inches(block_top), Inches(img_w), Inches(block_h), padding=Inches(0.10), mode="contain")
+        add_picture_fit(
+            slide, image_path,
+            Inches(img_left), Inches(block_top), Inches(img_w), Inches(block_h),
+            padding=Inches(0.12), mode="contain",
+        )
     else:
-        _, placeholder_tf = safe_add_textbox(slide, img_left + 0.3, block_top + 1.45, img_w - 0.6, 0.45, auto_fit=True)
+        _, placeholder_tf = safe_add_textbox(slide, img_left + 0.35, block_top + 1.55, img_w - 0.7, 0.5, auto_fit=True)
         pp = placeholder_tf.paragraphs[0]
-        pp.text = clamp_text(slide_data.get("image_caption") or "视觉图像区域", 18)
-        style_paragraph(pp, size=13, bold=True, color=theme_tokens["secondary"], align=PP_ALIGN.CENTER)
-    add_card(slide, Inches(text_left), Inches(block_top), Inches(text_w), Inches(block_h), theme_tokens["accent"], theme_tokens["line"], 1.0)
+        pp.text = clamp_text(slide_data.get("image_caption") or "视觉图像区域", 20)
+        style_paragraph(pp, size=14, bold=True, color=theme_tokens["secondary"], align=PP_ALIGN.CENTER)
+
+    if bold_frame:
+        add_accent_vertical_rule(slide, theme_tokens, text_left, block_top, block_h)
+    text_pad = 0.16 if bold_frame else 0.12
+    inner_w = max(2.8, text_w - text_pad - 0.08)
+
     caption_text = (slide_data.get("image_caption") or "").strip()
+    raw_summary = (slide_data.get("summary") or "").strip()
+    raw_title = (slide_data.get("title") or "").strip()
+    _refs = {x for x in (caption_text, raw_summary, raw_title) if (x or "").strip()}
+    _ref_keys = {_norm_text(x) for x in _refs}
+    if not caption_text:
+        caption_text = _image_slide_caption_when_missing(slide_data, _ref_keys)
     bullets = _dedupe_preserve_order(slide_data.get("bullets") or [])
-    bullets = [b for b in bullets if _norm_text(b) not in {_norm_text(caption_text), _norm_text(summary_text)}]
-    _, text_tf = safe_add_textbox(slide, text_left + 0.26, block_top + 0.22, text_w - 0.52, block_h - 0.42, auto_fit=True)
-    if caption_text:
-        cap_text, cap_size = fit_single_text_to_box(caption_text, text_w - 0.75, 0.54, 16, 12, max_len=28, bold=True)
-        caption = text_tf.paragraphs[0]
-        caption.text = cap_text
-        style_paragraph(caption, size=cap_size, bold=True, color=theme_tokens["secondary"])
-        caption.space_after = Pt(4)
-    if summary_text:
-        summary_fit, body_size = fit_single_text_to_box(summary_text, text_w - 0.75, 0.85, 13, 10, max_len=70)
-        sp = text_tf.add_paragraph() if caption_text else text_tf.paragraphs[0]
-        sp.text = summary_fit
-        style_paragraph(sp, size=body_size, color=theme_tokens["muted"])
-        sp.space_after = Pt(6)
-    else:
-        body_size = 12
-    bullet_points, image_bullet_size, _ = fit_bullets_to_box(bullets, text_w - 0.75, 1.95, preferred_size=max(11, body_size), min_size=9, max_items=3, max_len=30)
+    _ref_keys_b = set(_ref_keys)
+    _ref_keys_b.add(_norm_text(caption_text))
+    bullets = [b for b in bullets if _norm_text(b) and _norm_text(b) not in _ref_keys_b]
+    body_fb = _image_slide_body_fallback(slide_data, _ref_keys_b)
+
+    _, text_tf = safe_add_textbox(slide, text_left + text_pad, block_top + 0.1, inner_w, block_h - 0.2, auto_fit=True)
+    cap_text, cap_size = fit_single_text_to_box(caption_text, inner_w, 0.82, 16, 12, max_len=54, bold=True)
+    caption = text_tf.paragraphs[0]
+    caption.text = cap_text
+    style_paragraph(caption, size=cap_size, bold=True, color=theme_tokens["secondary"])
+    caption.space_after = Pt(5)
+    bullet_points, image_bullet_size, _ = fit_bullets_to_box(
+        bullets, inner_w, block_h - 1.15, preferred_size=13, min_size=11, max_items=4, max_len=46,
+        fallback_text=body_fb,
+    )
     for point in bullet_points:
-        pp = text_tf.add_paragraph()
-        pp.text = f"• {point}"
-        style_paragraph(pp, size=image_bullet_size, color=theme_tokens["primary"])
-        pp.space_after = Pt(4)
+        pt = (point or "").strip()
+        if not pt:
+            continue
+        append_bullet_paragraph_to_frame(
+            text_tf, pt, image_bullet_size, theme_tokens["primary"], theme_tokens["secondary"], space_after_pt=4
+        )
     add_footer(slide, theme_tokens, page_text)
     add_speaker_notes(slide, slide_data.get("speaker_note") or summary_text or caption_text)
     return slide
@@ -791,34 +1159,115 @@ def render_image_slide(prs, slide_data, theme_tokens, page_text, image_on_left=T
 def render_compare_slide(prs, slide_data, theme_tokens, page_text):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_full_rect(slide, 0, 0, prs.slide_width, prs.slide_height, theme_tokens["light"])
-    title_text, title_size = fit_single_text_to_box(slide_data.get("title") or "Compare", 10.4, 0.7, 23, 18, max_len=34, bold=True)
-    _, title_tf = safe_add_textbox(slide, 0.95, 0.68, 10.4, 0.7, auto_fit=True)
+    lv = slide_data.get("layout_variant") or "compare_panels"
+    title_text, title_size = fit_single_text_to_box(
+        slide_data.get("title") or "Compare", PAGE_TEXT_W, TITLE_BOX_H_IN, 23, 18, max_len=34, bold=True
+    )
+    _, title_tf = safe_add_textbox(slide, PAGE_MARGIN_X, TITLE_TOP_IN + 0.04, PAGE_TEXT_W, TITLE_BOX_H_IN, auto_fit=True)
     p = title_tf.paragraphs[0]
     p.text = title_text
     style_paragraph(p, size=title_size, bold=True, color=theme_tokens["primary"])
-    summary_text, sum_size = fit_single_text_to_box(slide_data.get("summary") or "", 10.2, 0.56, 15, 11, max_len=60)
-    _, sub_tf = safe_add_textbox(slide, 0.95, 1.42, 10.2, 0.56, auto_fit=True)
+    summary_text, sum_size = fit_single_text_to_box(slide_data.get("summary") or "", PAGE_TEXT_W, SUB_BOX_H_IN, 14, 11, max_len=60)
+    _, sub_tf = safe_add_textbox(slide, PAGE_MARGIN_X, SUB_TOP_IN + 0.08, PAGE_TEXT_W, SUB_BOX_H_IN, auto_fit=True)
     p2 = sub_tf.paragraphs[0]
     p2.text = summary_text
     style_paragraph(p2, size=sum_size, color=theme_tokens["muted"])
-    add_full_rect(slide, Inches(0.95), Inches(2.08), Inches(4.95), Inches(0.46), theme_tokens["primary"])
-    add_full_rect(slide, Inches(6.28), Inches(2.08), Inches(4.95), Inches(0.46), theme_tokens["secondary"])
-    _, l_head_tf = safe_add_textbox(slide, 1.12, 2.15, 4.55, 0.26, auto_fit=True)
+    add_full_rect(slide, Inches(0.95), Inches(2.05), Inches(4.95), Inches(0.44), theme_tokens["primary"])
+    add_full_rect(slide, Inches(6.28), Inches(2.05), Inches(4.95), Inches(0.44), theme_tokens["secondary"])
+    _, l_head_tf = safe_add_textbox(slide, 1.12, 2.12, 4.55, 0.26, auto_fit=True)
     lp = l_head_tf.paragraphs[0]
     lp.text = clamp_text(slide_data.get("left_title") or "方案 A", 14)
     style_paragraph(lp, size=13, bold=True, color=theme_tokens["light"])
-    _, r_head_tf = safe_add_textbox(slide, 6.45, 2.15, 4.55, 0.26, auto_fit=True)
+    _, r_head_tf = safe_add_textbox(slide, 6.45, 2.12, 4.55, 0.26, auto_fit=True)
     rp = r_head_tf.paragraphs[0]
     rp.text = clamp_text(slide_data.get("right_title") or "方案 B", 14)
     style_paragraph(rp, size=13, bold=True, color=theme_tokens["light"])
-    add_card(slide, Inches(0.95), Inches(2.65), Inches(4.95), Inches(3.55), theme_tokens["accent"])
-    add_card(slide, Inches(6.28), Inches(2.65), Inches(4.95), Inches(3.55), theme_tokens["accent"])
-    left_points, left_size, _ = fit_bullets_to_box(slide_data.get("left_points"), 4.2, 2.9, preferred_size=14, min_size=10, max_items=4, max_len=30, fallback_text=summary_text)
-    _, left_tf = safe_add_textbox(slide, 1.22, 2.95, 4.18, 2.95, auto_fit=True)
-    populate_bullets(left_tf, left_points, left_size, theme_tokens["primary"], space_after=4)
-    right_points, right_size, _ = fit_bullets_to_box(slide_data.get("right_points"), 4.2, 2.9, preferred_size=14, min_size=10, max_items=4, max_len=30, fallback_text=summary_text)
-    _, right_tf = safe_add_textbox(slide, 6.55, 2.95, 4.18, 2.95, auto_fit=True)
-    populate_bullets(right_tf, right_points, right_size, theme_tokens["primary"], space_after=4)
+
+    body_top = 2.58
+    body_h = 3.62
+    if lv == "compare_open":
+        add_column_divider(slide, theme_tokens, 6.08, body_top, body_h)
+        left_points, left_size, _ = fit_bullets_to_box(
+            slide_data.get("left_points"), 4.35, 3.15, preferred_size=14, min_size=10, max_items=4, max_len=42, fallback_text=summary_text,
+        )
+        _, left_tf = safe_add_textbox(slide, 1.12, body_top + 0.12, 4.35, body_h - 0.2, auto_fit=True)
+        populate_bullets(left_tf, left_points, left_size, theme_tokens["primary"], accent_color=theme_tokens["secondary"])
+        right_points, right_size, _ = fit_bullets_to_box(
+            slide_data.get("right_points"), 4.35, 3.15, preferred_size=14, min_size=10, max_items=4, max_len=42, fallback_text=summary_text,
+        )
+        _, right_tf = safe_add_textbox(slide, 6.42, body_top + 0.12, 4.35, body_h - 0.2, auto_fit=True)
+        populate_bullets(right_tf, right_points, right_size, theme_tokens["primary"], accent_color=theme_tokens["secondary"])
+    else:
+        add_card(slide, Inches(0.95), Inches(body_top), Inches(4.95), Inches(body_h), theme_tokens["accent"], theme_tokens["line"], 0.75)
+        add_card(slide, Inches(6.28), Inches(body_top), Inches(4.95), Inches(body_h), theme_tokens["accent"], theme_tokens["line"], 0.75)
+        left_points, left_size, _ = fit_bullets_to_box(
+            slide_data.get("left_points"), 4.2, 2.95, preferred_size=14, min_size=10, max_items=4, max_len=40, fallback_text=summary_text,
+        )
+        _, left_tf = safe_add_textbox(slide, 1.22, body_top + 0.22, 4.18, body_h - 0.35, auto_fit=True)
+        populate_bullets(left_tf, left_points, left_size, theme_tokens["primary"], accent_color=theme_tokens["secondary"])
+        right_points, right_size, _ = fit_bullets_to_box(
+            slide_data.get("right_points"), 4.2, 2.95, preferred_size=14, min_size=10, max_items=4, max_len=40, fallback_text=summary_text,
+        )
+        _, right_tf = safe_add_textbox(slide, 6.55, body_top + 0.22, 4.18, body_h - 0.35, auto_fit=True)
+        populate_bullets(right_tf, right_points, right_size, theme_tokens["primary"], accent_color=theme_tokens["secondary"])
+    add_footer(slide, theme_tokens, page_text)
+    add_speaker_notes(slide, slide_data.get("speaker_note") or summary_text)
+    return slide
+
+
+def render_timeline_slide(prs, slide_data, theme_tokens, page_text):
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    add_full_rect(slide, 0, 0, prs.slide_width, prs.slide_height, theme_tokens["light"])
+    add_full_rect(slide, Inches(0), Inches(0), Inches(SLIDE_W_IN), Inches(0.18), theme_tokens["secondary"])
+
+    title_text, title_size = fit_single_text_to_box(
+        slide_data.get("title") or "路线图", PAGE_TEXT_W, TITLE_BOX_H_IN, 23, 18, max_len=34, bold=True
+    )
+    _, title_tf = safe_add_textbox(slide, PAGE_MARGIN_X, TITLE_TOP_IN - 0.04, PAGE_TEXT_W, TITLE_BOX_H_IN, auto_fit=True)
+    p = title_tf.paragraphs[0]
+    p.text = title_text
+    style_paragraph(p, size=title_size, bold=True, color=theme_tokens["primary"])
+    summary_text, sum_size = fit_single_text_to_box(slide_data.get("summary") or "", PAGE_TEXT_W, SUB_BOX_H_IN, 14, 11, max_len=72)
+    _, sub_tf = safe_add_textbox(slide, PAGE_MARGIN_X, SUB_TOP_IN - 0.06, PAGE_TEXT_W, SUB_BOX_H_IN, auto_fit=True)
+    p2 = sub_tf.paragraphs[0]
+    p2.text = summary_text
+    style_paragraph(p2, size=sum_size, color=theme_tokens["muted"])
+
+    steps = [str(s).strip() for s in (slide_data.get("timeline_steps") or slide_data.get("bullets") or []) if str(s).strip()]
+    if not steps:
+        steps = [summary_text or "待补充阶段说明。"]
+    n = min(len(steps), 5)
+    steps = steps[:n]
+
+    rail_left = 1.18
+    rail_top = 2.05
+    rail_h = 4.35
+    rail = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(rail_left), Inches(rail_top), Inches(0.05), Inches(rail_h))
+    rail.fill.solid()
+    rail.fill.fore_color.rgb = theme_tokens["line"]
+    rail.line.fill.background()
+
+    slot_h = rail_h / max(n, 1)
+    for i, step in enumerate(steps):
+        cy = rail_top + slot_h * i + slot_h * 0.22
+        node = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(rail_left - 0.09), Inches(cy), Inches(0.22), Inches(0.22))
+        node.fill.solid()
+        node.fill.fore_color.rgb = theme_tokens["secondary"]
+        node.line.fill.background()
+        label = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(rail_left + 0.35), Inches(cy - 0.02), Inches(0.55), Inches(0.26))
+        label.fill.solid()
+        label.fill.fore_color.rgb = theme_tokens["accent"]
+        label.line.fill.background()
+        _, lab_tf = safe_add_textbox(slide, rail_left + 0.38, cy - 0.01, 0.5, 0.24, auto_fit=True)
+        lp = lab_tf.paragraphs[0]
+        lp.text = f"{i + 1}"
+        style_paragraph(lp, size=11, bold=True, color=theme_tokens["primary"], align=PP_ALIGN.CENTER)
+        step_fit, st_size = fit_single_text_to_box(step, 8.9, max(0.55, slot_h - 0.15), 15, 11, max_len=68)
+        _, st_tf = safe_add_textbox(slide, rail_left + 1.05, cy - 0.06, 8.9, max(0.55, slot_h - 0.12), auto_fit=True)
+        sp = st_tf.paragraphs[0]
+        sp.text = ""
+        _append_emphasized_spans(sp, step_fit, st_size, theme_tokens["muted"], theme_tokens["secondary"])
+
     add_footer(slide, theme_tokens, page_text)
     add_speaker_notes(slide, slide_data.get("speaker_note") or summary_text)
     return slide
@@ -842,6 +1291,8 @@ def build_pptx_file(ppt_data: dict) -> BytesIO:
             render_section_slide(prs, slide_data, theme_tokens, page_text)
         elif slide_type == "highlight":
             render_highlight_slide(prs, slide_data, theme_tokens, page_text)
+        elif slide_type == "timeline":
+            render_timeline_slide(prs, slide_data, theme_tokens, page_text)
         elif slide_type == "two_column":
             render_two_column_slide(prs, slide_data, theme_tokens, page_text)
         elif slide_type == "compare":

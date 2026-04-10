@@ -88,7 +88,7 @@ api_key = os.getenv("OPENROUTER_API_KEY")
 if not api_key:
     raise ValueError("API key not found. Please set OPENROUTER_API_KEY in your environment variables.")
 
-client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key="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",)
+client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
 print("[startup] OPENROUTER_API_KEY loaded:", bool(api_key))
 print("[startup] PPT_IMAGE_MODEL:", repr(os.getenv("PPT_IMAGE_MODEL")))
 print("[startup] preferred ppt builder:", PPT_BUILDER_SOURCE)
@@ -214,11 +214,16 @@ def populate_bullets(tf, bullet_points, size, color, space_after=6):
     tf.word_wrap = True
     tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
     tf.vertical_anchor = MSO_VERTICAL_ANCHOR.TOP
-    for idx, bullet in enumerate(bullet_points):
-        p = tf.paragraphs[0] if idx == 0 else tf.add_paragraph()
-        p.text = f"• {bullet}"
+    idx_out = 0
+    for bullet in bullet_points or []:
+        b = (bullet or "").strip()
+        if not b:
+            continue
+        p = tf.paragraphs[0] if idx_out == 0 else tf.add_paragraph()
+        p.text = f"• {b}"
         style_paragraph(p, size=size, color=color)
         p.space_after = Pt(space_after)
+        idx_out += 1
 
 
 def safe_add_textbox(slide, left_in, top_in, width_in, height_in, text='', auto_fit=True):
@@ -488,16 +493,20 @@ def normalize_ppt_json(data: dict) -> dict:
         if not isinstance(item, dict):
             continue
         slide_type = str(item.get("type") or "bullet").lower()
-        if slide_type not in {"section", "bullet", "highlight", "two_column", "compare", "image_left", "image_right"}:
+        if slide_type not in {"section", "bullet", "highlight", "two_column", "compare", "image_left", "image_right", "timeline"}:
             slide_type = "bullet"
         bullets = item.get("bullets") or []
         if not isinstance(bullets, list):
             bullets = []
+        timeline_steps = item.get("timeline_steps") or []
+        if not isinstance(timeline_steps, list):
+            timeline_steps = []
         normalized_slides.append({
             "type": slide_type,
             "title": str(item.get("title") or "").strip(),
             "summary": str(item.get("summary") or "").strip(),
             "bullets": [str(x).strip() for x in bullets if str(x).strip()],
+            "timeline_steps": [str(x).strip() for x in timeline_steps if str(x).strip()],
             "left_title": str(item.get("left_title") or "").strip(),
             "right_title": str(item.get("right_title") or "").strip(),
             "left_points": [str(x).strip() for x in (item.get("left_points") or []) if str(x).strip()],
@@ -523,40 +532,61 @@ def generate_ppt_structure(topic: str, upload_id: str = "") -> dict:
             f"参考资料内容：\n{uploaded['content'][:12000]}"
         )
 
-    prompt = f"""请根据下面的主题生成一份“内容完整、适合正式展示、并包含视觉页”的 PPT 结构，输出严格 JSON。
+    prompt = f"""请根据下面的主题生成一份“可直接上台演讲、内容扎实、并包含视觉页”的 PPT 结构，输出严格 JSON。
 主题：{topic}
 {file_context}
 
 你需要自动判断 theme，可选值只有：selena / business / academic。
-你需要为每一页自动选择 type，可选值只有：section / bullet / highlight / two_column / compare / image_left / image_right。
+你需要为每一页自动选择 type，可选值：section / bullet / highlight / two_column / compare / image_left / image_right / timeline。
+- timeline：用于路线图、阶段计划、里程碑、排期；使用 timeline_steps（3~5 条，每条为完整句，含时间或阶段信息）；可同时保留 bullets 与 timeline_steps 一致以便兼容。
 第一页封面不用放进 slides，系统会自动生成封面。
 
-【核心要求】
-1. 这不是大纲，而是可以直接展示的演示文稿内容。
-2. 每一页都必须表达一个明确观点，不能只写标题。
-3. bullet、left_points、right_points 必须写成完整表达，不能只是词语堆砌。
+【核心目标】
+1. 这不是“泛泛而谈”的大纲，而是可以直接讲的演示稿内容。
+2. 每一页都要有一个明确结论（takeaway），summary 必须体现判断，不要只做背景介绍。
+3. 全文保持“结论 -> 依据 -> 行动”的表达习惯，确保听众能听完就知道下一步做什么。
 4. 对于适合视觉化表达的内容，必须主动使用 image_left 或 image_right。
-5. 如果用户只给了很短的需求，也要根据常见商业、产品、学术表达补足合理内容与视觉方向。
+5. 若用户需求较短，可合理补全结构，但必须避免空泛套话，优先给出可执行、可落地的信息。
 
 【视觉页要求】
 - 整份 PPT 至少包含 1 页、最多 2 页 image_left 或 image_right。
 - 每个视觉页都必须给出 image_prompt，写成适合生成演示图片的英文提示词。
-- image_prompt 要具体，包含主体、场景、风格、配色或构图，例如 clean presentation illustration / cinematic startup office / futuristic AI workflow diagram。
-- image_caption 用一句简短中文说明图片与页面观点的关系。
+- image_prompt 要具体，包含主体、场景、风格、配色或构图，避免抽象空词。
+- image_caption 用一句简短中文说明图片如何支撑本页结论，不能只写“示意图”。
 - 图片应优先适配 16:9 商务演示风格，避免复杂背景、过多人物、文字水印。
 
-【内容质量要求】
-- summary：1~2 句完整说明，中文建议 28~60 字。
-- bullet / left_points / right_points：每条中文建议 18~38 字，必须是完整句或完整表达。
-- speaker_note：2~4 句演讲备注，说明这一页该怎么讲、重点在哪里，中文建议 50~120 字。
-- highlight：必须像演讲中的核心判断，适合放大展示。
+【内容质量与反空话要求】
+- summary：1~2 句，必须包含明确判断或结论，中文建议 28~60 字。
+- bullet / left_points / right_points：每条中文建议 18~38 字，必须是完整表达，并至少包含以下要素之一：动作 / 依据 / 指标 / 时间 / 风险。
+- 禁止高频空话单独成句，如“全面提升效率”“持续赋能业务”“增强竞争力”等；如果出现，必须配具体对象和落地方式。
+- speaker_note：2~4 句，至少包含这三类信息中的两类：如何讲这一页、要强调的数据或证据、与下一页的过渡。
+- highlight：必须是可直接上台强调的核心判断句，避免口号化。
+- 如果缺少可验证数据，不要编造数字；可使用“假设：”或“待补充：”明确标注。
+
+【去重与完整性】
+- 每页 summary 不得与 title 仅作同义复述或简单扩写；须额外给出判断、范围或收束信息。
+- 同页 bullet / left_points / right_points 不得与 title、summary 语义重复（勿换说法复述同一句）。
+- image_left / image_right：除页顶 summary 外，必须提供至少 2 条 bullets，写行动、依据或下一步，不得复述页顶 summary 原句。
+- image_caption 专门说明“图示如何支撑本页结论”，禁止照抄 summary。
+- 禁止在 title、summary、bullet、caption、highlight、closing 等可见字段末尾使用「…」或「...」；须用完整句号收束。
+- 顶层 subtitle（封面副标题）：须 **40~95 字**，建议写成 2~3 句（可用分号衔接）：①汇报对象与场景；②材料覆盖范围或时间；③本报告要回答的一个核心问题。禁止只做主标题的同义压缩。
+- section 页（如引言与背景）：summary 须 **85~220 字**，**至少四句**，依次写清：行业与组织背景、关键趋势或数据感知、当前主要矛盾或机会、本节将交付的结论与后文结构（勿写成标题扩写）。
+- bullet 页：bullets 至少 3 条、优先 4 条；不得输出空字符串占位。
+- compare 页：left_points 与 right_points 各至少 3 条、至多 4 条，形成一一对照。
+- highlight 页：closing 必须与 highlight 形成递进（行动号召、下一步或风险提醒），禁止与 highlight 同义改写。
+- 视觉页：bullets 为 2~4 条非空完整句；image_caption 从“图里有什么、如何印证结论”角度写，避免复述页顶 summary 的核心谓语。
+- 结论类视觉页：image_caption 与 bullets **禁止**元话术（如「这一页总结了…」「本页旨在…」「报告的核心结论」等）；须写**具体行动或证据**（负责人、时间窗口、交付物、指标之一）。
+- image_caption 禁止元话术（如「总结报告的核心要点」「本页将展示」等）和半截句；须写具体结论关系，句末只能是句号问号叹号。
+- image_prompt（英文）须强调画面无任何文字与标题条，仅用隐喻或场景表达，避免出现 slide title / headline 构图。
 
 【结构要求】
 - 总页数控制在 7 到 9 页（不含封面）。
 - 至少包含 1 页 highlight。
 - 至少包含 1 页 two_column 或 compare。
 - 至少包含 2 页 bullet。
-- 不要生成空字段，不要生成只有一两个字的内容。
+- 若叙事含落地计划、路线图、阶段目标，至少 1 页使用 timeline（勿用普通 bullet 凑合）。
+- 建议整体叙事遵循：背景与问题 -> 关键洞察 -> 方案与路径 -> 落地计划 -> 结论与行动。
+- 不要生成空字段，不要生成只有一两个字的内容，不要重复同义内容。
 
 JSON 格式必须是：
 {{
@@ -565,19 +595,20 @@ JSON 格式必须是：
 "theme":"selena",
 "slides":[
     {{
-    "type":"section / bullet / highlight / two_column / compare / image_left / image_right",
+    "type":"section / bullet / highlight / two_column / compare / image_left / image_right / timeline",
     "title":"页标题",
     "summary":"这一页的核心结论句或两句简要说明，不能为空",
     "bullets":["完整表达1","完整表达2","完整表达3"],
     "left_title":"左侧标题，可选",
     "right_title":"右侧标题，可选",
-    "left_points":["左侧完整表达1","左侧完整表达2"],
-    "right_points":["右侧完整表达1","右侧完整表达2"],
+    "left_points":["左侧完整表达1","左侧完整表达2","左侧完整表达3"],
+    "right_points":["右侧完整表达1","右侧完整表达2","右侧完整表达3"],
     "highlight":"适用于 highlight 页的大句子，必须有判断性",
     "closing":"适用于 highlight 页的收束句",
     "speaker_note":"这一页该怎么讲，2到4句",
     "image_prompt":"用于生成页面图片的英文提示词，视觉页必填",
-    "image_caption":"图片说明，中文简短一句"
+    "image_caption":"图片说明，中文简短一句",
+    "timeline_steps":["阶段或里程碑1","阶段或里程碑2","阶段或里程碑3"]
     }}
 ]
 }}
@@ -596,9 +627,9 @@ JSON 格式必须是：
             {
                 "role": "system",
                 "content": (
-                    "You create presentation-ready PPT structures and return strict JSON only. "
-                    "The result must contain substantial speaking content, clear slide logic, "
-                    "and 1-2 visual slides with concrete English image prompts for presentation use."
+                    "You create high-quality, speech-ready PPT structures and return strict JSON only. "
+                    "The slides must be specific, actionable, and non-generic, with clear takeaway-driven logic. "
+                    "Include 1-2 visual slides with concrete English image prompts that directly support slide conclusions."
                 )
             },
             {"role": "user", "content": prompt}
@@ -614,7 +645,84 @@ JSON 格式必须是：
     data = json.loads(raw)
     if "slides" not in data or not isinstance(data["slides"], list) or not data["slides"]:
         raise ValueError("Invalid PPT JSON structure.")
-    return normalize_ppt_json(data)
+    data = normalize_ppt_json(data)
+    data = refine_ppt_structure_quality(topic=topic, ppt_data=data, has_upload=bool(uploaded))
+    return data
+
+
+def refine_ppt_structure_quality(topic: str, ppt_data: dict, has_upload: bool = False) -> dict:
+    slides = ppt_data.get("slides") or []
+    if not slides:
+        return ppt_data
+
+    review_prompt = f"""你将收到一份已生成的 PPT JSON。你的任务是“质量自检并仅重写薄弱页面”，然后返回完整 JSON。
+
+主题：{topic}
+是否有参考资料：{"是" if has_upload else "否"}
+
+【目标】
+把内容从“能看”提升为“可直接上台讲”，重点修正空泛、重复、口号化表达。
+
+【自检标准】
+1. 每页都必须有明确结论（summary 体现判断，而非背景介绍）。
+2. bullet / left_points / right_points 不能只是正确的废话；每条尽量包含动作、依据、指标、时间、风险中的至少一种信息。
+3. speaker_note 要有讲法：至少体现“怎么讲/强调什么/如何过渡”中的两项。
+4. 不能编造具体数据；若缺数据可写“假设：”或“待补充：”。
+5. 视觉页 image_caption 必须解释图片与本页结论的关系；image_prompt 必须具体且可生成，不要抽象空词堆砌。
+6. 保持原有页面数量、页面顺序、type 分布（尤其保留 1~2 页视觉页；若有 timeline 页须保留 timeline 类型与 timeline_steps），只优化内容质量。
+7. 消除 title 与 summary 的重复；视觉页右侧正文禁止再复述页顶 summary（可改为行动项、证据或下一步）。
+8. image_left / image_right 至少保留 2 条不重复的 bullets，且不得与 image_caption、summary 同义重复。
+9. 去掉可见字段末尾的「…」「...」，改为完整句末标点。
+10. 顶层 subtitle 若少于约 40 字或与 title 同义，须扩展为 40~95 字，包含受众、范围与核心问题。
+11. section 页 summary 若少于约 85 字或不足四句，须扩展为 85~220 字（背景—趋势—矛盾/机会—本节交付与结构）。
+12. bullet 页若不足 3 条，须补全；compare 每侧若不足 3 条，须补全；不得留下空字符串 bullet。
+13. highlight 的 closing 若与 highlight 同义，须改为行动项、下一步或风险提醒。
+14. 视觉页 bullets 中不得出现空串；caption 与页顶 summary 谓语高度重叠时须改写 caption 角度。
+15. 视觉页 image_caption 不得与任一条 bullet 开头整句重复；不得出现以「...」或「…」结尾的未写完句。
+16. 若 image_caption 含元话术或半成品，须改为具体行动或证据句；image_prompt 须禁止图中出现任何文字与英文标题。
+17. 若 image_caption 或 bullet 以「这一页/本页…总结」开头，须整句改写为具体结论或行动项，不得保留幻灯片说明语。
+18. 禁止出现多页 timeline（或 bullet 升格为时间轴后）**标题、summary、timeline_steps 完全一致**的重复页；若发现重复，只保留一页并将其余改为不同议题的 bullet/compare 或合并为单页更完整的时间轴。
+
+【重写策略】
+- 仅重写低质量字段：summary / bullets / left_points / right_points / highlight / closing / speaker_note / image_caption / image_prompt。
+- 对高质量字段尽量保持不变，避免整份重写造成风格漂移。
+
+【输入 JSON】
+{json.dumps(ppt_data, ensure_ascii=False)}
+
+【输出规则】
+1. 只返回 JSON。
+2. 不要 markdown，不要解释，不要代码块。
+3. 返回结构必须与输入 schema 一致，且 slides 不得为空。
+"""
+
+    try:
+        review_response = client.chat.completions.create(
+            model="openai/gpt-4o-mini",
+            temperature=0.3,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a strict PPT quality reviewer and rewriter. "
+                        "Improve weak slide content while preserving structure and order. "
+                        "Return strict JSON only."
+                    ),
+                },
+                {"role": "user", "content": review_prompt},
+            ],
+        )
+        reviewed_raw = (review_response.choices[0].message.content or "").strip()
+        if reviewed_raw.startswith("```"):
+            reviewed_raw = reviewed_raw.strip("`")
+            if reviewed_raw.lower().startswith("json"):
+                reviewed_raw = reviewed_raw[4:].strip()
+        reviewed_data = json.loads(reviewed_raw)
+        if "slides" in reviewed_data and isinstance(reviewed_data["slides"], list) and reviewed_data["slides"]:
+            return normalize_ppt_json(reviewed_data)
+    except Exception as e:
+        print("PPT quality refine fallback:", e)
+    return ppt_data
 
 
 def build_visual_prompt(topic: str, slide_data: dict, theme: str) -> str:
@@ -637,7 +745,8 @@ def llm_generate_image_prompt(topic: str, slide_data: dict, theme: str) -> str:
     try:
         prompt = (
             "Generate one concise English image prompt for a PowerPoint slide. Return only the prompt text. "
-            "The image must be presentation-friendly, visually clean, with no text, no watermark, and suitable for a 16:9 slide.\n\n"
+            "The image must be presentation-friendly, visually clean, with no text of any kind (no letters, captions, titles, labels), "
+            "no watermark, no slide-title graphics, metaphor or scene only, suitable for a 16:9 slide.\n\n"
             f"Theme: {theme}\n"
             f"Presentation topic: {topic}\n"
             f"Slide title: {slide_data.get('title', '')}\n"
@@ -715,7 +824,8 @@ def generate_presentation_image_assets(prompt: str, aspect_ratio: str = "16:9", 
             "role": "user",
             "content": (
                 "Create a clean, presentation-ready image for a slide. "
-                "Avoid text, logos, watermarks, UI screenshots, or clutter.\n\n"
+                "Strictly no text in the image: no letters, words, titles, captions, labels, or logos in any language. "
+                "No watermarks or UI. Use metaphor or scene only.\n\n"
                 f"{prompt}"
             )
         }],
@@ -923,7 +1033,30 @@ def clamp_text(text: str, max_len: int = 120) -> str:
     text = (text or "").strip()
     if len(text) <= max_len:
         return text
-    return text[:max_len - 1].rstrip() + "…"
+    candidate = text[:max_len]
+    cut_chars = ["。", "！", "？", ".", "!", "?", "；", ";", "，", ",", ":", "：", "、"]
+    last_pos = -1
+    for ch in cut_chars:
+        pos = candidate.rfind(ch)
+        if pos > last_pos:
+            last_pos = pos
+    if last_pos >= max(8, int(max_len * 0.55)):
+        return candidate[: last_pos + 1].strip()
+    shortened = candidate.rstrip("，,。.!！?？:：;；、 ")
+    if not shortened:
+        shortened = candidate.strip()
+    has_cjk = any("\u4e00" <= c <= "\u9fff" for c in shortened)
+    if has_cjk:
+        if shortened[-1] not in "。！？":
+            return shortened + "。"
+        return shortened
+    if shortened[-1] not in ".!?":
+        return shortened + "."
+    return shortened
+
+
+def _slide_body_dedupe_key(s: str) -> str:
+    return " ".join((s or "").replace("•", "").replace("·", "").split()).strip().lower()
 
 
 def adaptive_font_size(text: str, default: int, minimum: int, breakpoints=None) -> int:
@@ -998,6 +1131,11 @@ def fit_bullets_to_box(points, box_width_in, box_height_in, preferred_size=18, m
         cleaned = [fallback_text]
 
     cleaned = [shrink_text(x, max_len) for x in cleaned[:max_items]]
+    cleaned = [x for x in cleaned if isinstance(x, str) and x.strip()]
+    if not cleaned and fallback_text:
+        fb = shrink_text(str(fallback_text).strip(), max_len)
+        if fb and fb.strip():
+            cleaned = [fb]
     if not cleaned:
         return [], preferred_size, False
 
@@ -1017,6 +1155,7 @@ def fit_bullets_to_box(points, box_width_in, box_height_in, preferred_size=18, m
                 return trimmed, size, reduced
 
     compact = [shrink_text(x, max(16, max_len - 10)) for x in trimmed]
+    compact = [x for x in compact if isinstance(x, str) and x.strip()]
     for size in range(preferred_size, min_size - 1, -1):
         needed_h = estimate_text_block_height(compact, box_width_in, size, line_spacing=1.16, paragraph_gap_pt=5, prefix_chars=2.2)
         if needed_h <= box_height_in:
@@ -1083,9 +1222,9 @@ def enforce_slide_content_budget(ppt_data: dict) -> dict:
             slide["right_title"] = clamp_text(slide.get("right_title") or "方案 B", 18)
 
         elif st in {"image_left", "image_right"}:
-            slide["summary"] = shrink_text(slide.get("summary") or "", 64)
-            slide["bullets"] = [shrink_text(x, 24) for x in (slide.get("bullets") or []) if str(x).strip()][:2]
-            slide["image_caption"] = shrink_text(slide.get("image_caption") or slide.get("summary") or "页面视觉图", 24)
+            slide["summary"] = shrink_text(slide.get("summary") or "", 88)
+            slide["bullets"] = [shrink_text(x, 52) for x in (slide.get("bullets") or []) if str(x).strip()][:4]
+            slide["image_caption"] = shrink_text(slide.get("image_caption") or slide.get("summary") or "页面视觉图", 48)
 
         elif st == "highlight":
             slide["highlight"] = clamp_text(slide.get("highlight") or slide.get("summary") or slide.get("title") or "核心观点", 68)
@@ -1166,9 +1305,9 @@ def render_cover_slide(prs: Presentation, ppt_data: dict, theme_tokens: dict):
     style_paragraph(p, size=title_size, bold=True, color=theme_tokens["primary"])
 
     subtitle_text, subtitle_size = fit_single_text_to_box(
-        ppt_data.get("subtitle", "Generated by Selena"), 8.4, 0.82, 18, 12, max_len=52
+        ppt_data.get("subtitle", "面向管理层的分析与行动建议"), 8.9, 1.42, 17, 12, max_len=118
     )
-    _, sub_tf = safe_add_textbox(slide, 1.02, 2.75, 8.4, 0.82, auto_fit=True)
+    _, sub_tf = safe_add_textbox(slide, 1.02, 2.65, 8.9, 1.42, auto_fit=True)
     sub = sub_tf.paragraphs[0]
     sub.text = subtitle_text
     style_paragraph(sub, size=subtitle_size, color=theme_tokens["muted"])
@@ -1183,16 +1322,19 @@ def render_section_slide(prs, slide_data, theme_tokens, page_text):
     add_full_rect(slide, 0, 0, prs.slide_width, prs.slide_height, theme_tokens["light"])
     add_full_rect(slide, Inches(0.85), Inches(1.15), Inches(11.2), Inches(4.0), theme_tokens["accent"])
 
-    title_text, title_size = fit_single_text_to_box(slide_data.get("title") or "Section", 9.2, 0.95, 28, 20, max_len=34, bold=True)
-    _, tf = safe_add_textbox(slide, 1.25, 1.95, 9.2, 0.95, auto_fit=True)
+    title_text, title_size = fit_single_text_to_box(slide_data.get("title") or "Section", 9.2, 0.88, 28, 20, max_len=34, bold=True)
+    _, tf = safe_add_textbox(slide, 1.25, 1.88, 9.2, 0.88, auto_fit=True)
     p = tf.paragraphs[0]
     p.text = title_text
     style_paragraph(p, size=title_size, bold=True, color=theme_tokens["primary"])
 
-    summary_text, summary_size = fit_single_text_to_box(slide_data.get("summary") or "", 9.0, 1.15, 17, 12, max_len=78)
-    s = tf.add_paragraph()
-    s.text = summary_text
-    style_paragraph(s, size=summary_size, color=theme_tokens["muted"])
+    summary_text, summary_size = fit_single_text_to_box(
+        slide_data.get("summary") or "", 8.35, 2.35, 16, 11, max_len=240
+    )
+    _, sum_tf = safe_add_textbox(slide, 1.55, 2.85, 8.35, 2.35, auto_fit=True)
+    sp = sum_tf.paragraphs[0]
+    sp.text = summary_text
+    style_paragraph(sp, size=summary_size, color=theme_tokens["muted"], align=PP_ALIGN.CENTER)
 
     add_footer(slide, theme_tokens, page_text)
     add_speaker_notes(slide, slide_data.get("speaker_note") or slide_data.get("summary") or "")
@@ -1311,7 +1453,7 @@ def render_image_slide(prs, slide_data, theme_tokens, page_text, image_on_left=T
     p.text = title_text
     style_paragraph(p, size=title_size, bold=True, color=theme_tokens["primary"])
 
-    summary_text, sum_size = fit_single_text_to_box(slide_data.get("summary") or "", 10.6, 0.5, 14, 11, max_len=52)
+    summary_text, sum_size = fit_single_text_to_box(slide_data.get("summary") or "", 10.6, 0.5, 14, 11, max_len=72)
     _, summary_tf = safe_add_textbox(slide, 0.82, 1.22, 10.6, 0.5, auto_fit=True)
     p2 = summary_tf.paragraphs[0]
     p2.text = summary_text
@@ -1335,17 +1477,36 @@ def render_image_slide(prs, slide_data, theme_tokens, page_text, image_on_left=T
         style_paragraph(pp, size=13, bold=True, color=theme_tokens["secondary"], align=PP_ALIGN.CENTER)
 
     add_card(slide, Inches(text_left), Inches(block_top), Inches(text_w), Inches(block_h), theme_tokens["accent"], theme_tokens["line"], 1.0)
-    caption_text, cap_size = fit_single_text_to_box(slide_data.get("image_caption") or summary_text or "图片与观点保持一致", 3.55, 0.65, 13, 10, max_len=18, bold=True)
+    raw_cap = (slide_data.get("image_caption") or "").strip()
+    cap_for_box = raw_cap or (slide_data.get("summary") or "").strip() or "图片与观点保持一致"
+    caption_text, cap_size = fit_single_text_to_box(cap_for_box, 3.55, 0.78, 13, 10, max_len=48, bold=True)
     _, text_tf = safe_add_textbox(slide, text_left + 0.22, block_top + 0.2, 3.55, 2.95, auto_fit=True)
     caption = text_tf.paragraphs[0]
     caption.text = caption_text
     style_paragraph(caption, size=cap_size, bold=True, color=theme_tokens["secondary"])
     caption.space_after = Pt(4)
 
-    image_points, image_bullet_size, _ = fit_bullets_to_box(slide_data.get("bullets"), 3.55, 2.0, preferred_size=11, min_size=9, max_items=2, max_len=18, fallback_text=summary_text)
+    ref_keys = {k for k in (
+        _slide_body_dedupe_key(slide_data.get("summary") or ""),
+        _slide_body_dedupe_key(slide_data.get("image_caption") or ""),
+        _slide_body_dedupe_key(slide_data.get("title") or ""),
+    ) if k}
+    _bullets_in = []
+    _seen_b = set(ref_keys)
+    for b in slide_data.get("bullets") or []:
+        bk = _slide_body_dedupe_key(str(b))
+        if bk and bk not in _seen_b:
+            _seen_b.add(bk)
+            _bullets_in.append(b)
+    image_points, image_bullet_size, _ = fit_bullets_to_box(
+        _bullets_in, 3.55, 2.15, preferred_size=12, min_size=10, max_items=4, max_len=42, fallback_text=summary_text
+    )
     for point in image_points:
+        pt = (point or "").strip()
+        if not pt:
+            continue
         pp = text_tf.add_paragraph()
-        pp.text = f"• {point}"
+        pp.text = f"• {pt}"
         style_paragraph(pp, size=image_bullet_size, color=theme_tokens["primary"])
         pp.space_after = Pt(3)
 
@@ -1398,10 +1559,13 @@ def render_compare_slide(prs, slide_data, theme_tokens, page_text):
 def build_pptx_file(ppt_data: dict) -> BytesIO:
     if Presentation is None:
         raise RuntimeError("python-pptx is not installed.")
-    # Keep a local safety net. When normalizer.py is split out later,
-    # app.py will already have called the facade, but this extra pass keeps
-    # standalone execution stable.
-    ppt_data = enforce_slide_content_budget(ppt_data)
+    budget_fn = modular_enforce_slide_content_budget or enforce_slide_content_budget
+    ppt_data = budget_fn(ppt_data)
+    try:
+        from ppt.layout_engine import finalize_slide_layouts
+        finalize_slide_layouts(ppt_data.get("slides", []))
+    except Exception:
+        pass
     ppt_data = ensure_slide_images(ppt_data, topic=ppt_data.get("title") or "Presentation", max_images=2)
     prs = Presentation()
     prs.slide_width = Inches(SLIDE_W_IN)
@@ -1416,6 +1580,15 @@ def build_pptx_file(ppt_data: dict) -> BytesIO:
             render_section_slide(prs, slide_data, theme_tokens, page_text)
         elif slide_type == "highlight":
             render_highlight_slide(prs, slide_data, theme_tokens, page_text)
+        elif slide_type == "timeline":
+            try:
+                from ppt.renderers import render_timeline_slide as _render_timeline_slide
+                _render_timeline_slide(prs, slide_data, theme_tokens, page_text)
+            except Exception:
+                fb = dict(slide_data)
+                fb["type"] = "bullet"
+                fb["bullets"] = fb.get("timeline_steps") or fb.get("bullets") or []
+                render_bullet_slide(prs, fb, theme_tokens, page_text)
         elif slide_type == "two_column":
             render_two_column_slide(prs, slide_data, theme_tokens, page_text)
         elif slide_type == "compare":
