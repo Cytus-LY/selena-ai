@@ -38,6 +38,20 @@ An AI-powered all-in-one assistant focused on intelligent PPT generation and rea
 * **Other:** Markdown rendering, streaming response, file parsing
 
 ---
+## ⚠️ Before Running
+
+This project requires an API key to enable AI features.
+
+Please set your API key first:
+
+Windows (CMD):
+set OPENROUTER_API_KEY=your_api_key_here
+
+PowerShell:
+$env:OPENROUTER_API_KEY="your_api_key_here"
+
+Mac / Linux:
+export OPENROUTER_API_KEY=your_api_key_here
 
 ## ⚡ Run Locally
 

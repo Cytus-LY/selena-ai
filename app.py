@@ -86,7 +86,7 @@ except Exception:
 
 api_key = os.getenv("OPENROUTER_API_KEY")
 if not api_key:
-    raise ValueError("API key not found. Please set OPENROUTER_API_KEY in your environment variables.")
+    raise ValueError("错误: 未检测到 API Key！请参考 README.md 或将 .env.example 重命名为 .env 并填入 Key。")
 
 client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
 print("[startup] OPENROUTER_API_KEY loaded:", bool(api_key))
