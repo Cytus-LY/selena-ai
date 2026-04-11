@@ -38,20 +38,18 @@ An AI-powered all-in-one assistant focused on intelligent PPT generation and rea
 * **Other:** Markdown rendering, streaming response, file parsing
 
 ---
-## ⚠️ Before Running
+## ⚠️ Configuration
 
-This project requires an API key to enable AI features.
+This project requires an API key from [OpenRouter](https://openrouter.ai/).
 
-Please set your API key first:
+1. **The Easy Way (Recommended):**
+   - Copy `.env.example` to a new file named `.env`.
+   - Open `.env` and paste your key: `OPENROUTER_API_KEY=your_api_key_here`
 
-Windows (CMD):
-set OPENROUTER_API_KEY=your_api_key_here
-
-PowerShell:
-$env:OPENROUTER_API_KEY="your_api_key_here"
-
-Mac / Linux:
-export OPENROUTER_API_KEY=your_api_key_here
+2. **The Manual Way (Environment Variable):**
+   - **Windows (CMD):** `set OPENROUTER_API_KEY=your_api_key_here`
+   - **PowerShell:** `$env:OPENROUTER_API_KEY="your_api_key_here"`
+   - **Mac / Linux:** `export OPENROUTER_API_KEY=your_api_key_here`
 
 ## ⚡ Run Locally
 
