@@ -23,7 +23,7 @@ An AI-powered all-in-one assistant focused on intelligent PPT generation and rea
 * Interactive UI with multi-mode switching
 * File upload and content parsing
 
-![Uploading ezgif-7b176ba4f61dde85.gif…]()
+![ezgif-7b176ba4f61dde85](https://github.com/user-attachments/assets/eb6cb6df-7977-4ec8-88da-8345eceb4e39)
 <img width="1260" height="857" alt="屏幕截图 2026-04-11 015231" src="https://github.com/user-attachments/assets/1b46f613-b305-41f6-a66a-56db12eccae8" />
 <img width="1267" height="863" alt="屏幕截图 2026-04-11 015222" src="https://github.com/user-attachments/assets/607aa7a8-ef30-413d-b51d-9411882cc153" />
 <img width="1153" height="653" alt="屏幕截图 2026-04-10 235808" src="https://github.com/user-attachments/assets/f6c15c73-1f35-4a3e-83c8-a747534600f2" />
